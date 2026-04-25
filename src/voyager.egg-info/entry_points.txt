@@ -1,0 +1,2 @@
+[console_scripts]
+voyager = voyager_cmd.main:cli
