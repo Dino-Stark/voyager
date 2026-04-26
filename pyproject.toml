@@ -11,10 +11,17 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
     "click>=8.1",
-    "javalang>=0.13.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "rich>=13.0",
+    # LSP client uses stdlib asyncio/subprocess (no extra dependency)
+    # Requires language servers to be installed separately:
+    #   Java: jdtls (Eclipse JDT Language Server)
+    #   TODO: Python: pyright-langserver
+    #   TODO: TypeScript: typescript-language-server
+    #   TODO: Go: gopls
+    #   TODO: C/C++: clangd
+    #   TODO: C#: OmniSharp
 ]
 
 [project.optional-dependencies]
