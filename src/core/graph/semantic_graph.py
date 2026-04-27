@@ -1,16 +1,11 @@
-"""Semantic graph data models.
-
-Defines the core data structures for the semantic graph:
-symbols (classes, fields, methods) and their references.
-"""
+"""Semantic graph models for the Agent-friendly operation layer."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class SymbolType(str, Enum):
@@ -27,65 +22,102 @@ class RefType(str, Enum):
 
 
 class Symbol(BaseModel):
-    """A symbol in the semantic graph."""
+    """A semantic symbol known to Voyager."""
 
-    id: str = Field(description="Fully qualified symbol id, e.g. 'OrderDTO.userId'")
+    id: str = Field(description="Stable id, e.g. com.example.OrderDTO.userId")
     type: SymbolType
     name: str
     file_path: str
     line: int = 0
     column: int = 0
     parent_id: str | None = None
-    extra: dict = Field(default_factory=dict)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class Reference(BaseModel):
-    """A reference from one symbol to another."""
+    """A typed relation between symbols."""
 
-    from_symbol: str = Field(description="Source symbol id")
-    to_symbol: str = Field(description="Target symbol id")
+    from_symbol: str
+    to_symbol: str
     ref_type: RefType
     file_path: str
     line: int = 0
     column: int = 0
+    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class SemanticGraph(BaseModel):
-    """The semantic graph containing all symbols and references."""
+    """Minimal V1 code graph.
 
+    The graph is the weak PSI layer described in the design docs: it turns LSP
+    coordinates and parser facts into stable objects that operations can target.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    project_path: str = ""
     symbols: list[Symbol] = Field(default_factory=list)
     references: list[Reference] = Field(default_factory=list)
-    _symbol_index: dict[str, Symbol] | None = None
+
+    _symbol_index: dict[str, Symbol] = PrivateAttr(default_factory=dict)
+    _simple_index: dict[tuple[SymbolType, str], list[Symbol]] = PrivateAttr(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        self.build_index()
 
     def build_index(self) -> None:
-        """Build a lookup index by symbol id."""
-        self._symbol_index = {s.id: s for s in self.symbols}
+        """Build in-memory lookup indexes."""
+
+        self._symbol_index = {symbol.id: symbol for symbol in self.symbols}
+        simple_index: dict[tuple[SymbolType, str], list[Symbol]] = {}
+        for symbol in self.symbols:
+            simple_index.setdefault((symbol.type, symbol.name), []).append(symbol)
+        self._simple_index = simple_index
 
     def get_symbol(self, symbol_id: str) -> Symbol | None:
-        """Look up a symbol by id."""
-        if self._symbol_index is None:
-            self.build_index()
         return self._symbol_index.get(symbol_id)
 
+    def resolve_class(self, class_name: str) -> Symbol | None:
+        """Resolve a class by FQN or unambiguous simple name."""
+
+        symbol = self.get_symbol(class_name)
+        if symbol and symbol.type == SymbolType.CLASS:
+            return symbol
+        matches = self._simple_index.get((SymbolType.CLASS, class_name), [])
+        return matches[0] if len(matches) == 1 else None
+
+    def resolve_field(self, class_name: str, field_name: str) -> Symbol | None:
+        """Resolve a field by class FQN/simple name and field name."""
+
+        class_symbol = self.resolve_class(class_name)
+        if class_symbol is None:
+            return None
+        return self.get_symbol(f"{class_symbol.id}.{field_name}")
+
     def get_field_symbol(self, class_name: str, field_name: str) -> Symbol | None:
-        """Look up a field symbol by class name and field name."""
-        target_id = f"{class_name}.{field_name}"
-        return self.get_symbol(target_id)
+        return self.resolve_field(class_name, field_name)
 
     def find_references_to(self, symbol_id: str) -> list[Reference]:
-        """Find all references pointing to a symbol."""
-        return [r for r in self.references if r.to_symbol == symbol_id]
+        return [ref for ref in self.references if ref.to_symbol == symbol_id]
 
     def find_references_from(self, symbol_id: str) -> list[Reference]:
-        """Find all references originating from a symbol."""
-        return [r for r in self.references if r.from_symbol == symbol_id]
+        return [ref for ref in self.references if ref.from_symbol == symbol_id]
 
     def get_affected_files_for_field(self, class_name: str, field_name: str) -> list[str]:
-        """Get all files that reference a specific field."""
-        field_id = f"{class_name}.{field_name}"
-        refs = self.find_references_to(field_id)
-        files = {r.file_path for r in refs}
-        symbol = self.get_symbol(field_id)
-        if symbol:
-            files.add(symbol.file_path)
+        """Return files affected by a field operation."""
+
+        field = self.resolve_field(class_name, field_name)
+        if field is None:
+            return []
+
+        files = {field.file_path}
+        parent = self.get_symbol(field.parent_id or "")
+        if parent is not None:
+            files.add(parent.file_path)
+
+        for ref in self.find_references_to(field.id):
+            files.add(ref.file_path)
         return sorted(files)
+
+    def symbols_by_type(self, symbol_type: SymbolType) -> list[Symbol]:
+        return [symbol for symbol in self.symbols if symbol.type == symbol_type]

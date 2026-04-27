@@ -50,8 +50,12 @@ class DiffEngine:
         )
 
         diff_text = "".join(diff)
-        additions = sum(1 for l in modified_lines if not l.startswith("-") and l.strip())
-        deletions = sum(1 for l in original_lines if not l.startswith("+") and l.strip())
+        additions = sum(
+            1 for line in modified_lines if not line.startswith("-") and line.strip()
+        )
+        deletions = sum(
+            1 for line in original_lines if not line.startswith("+") and line.strip()
+        )
 
         return FileDiff(
             file_path=str(file_path),

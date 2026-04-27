@@ -43,7 +43,7 @@ def scan_project(project_path: Path) -> ScanResult | None:
 
     console.print(f"Found [green]{len(classes)}[/green] Java classes. Building semantic graph...")
 
-    builder = GraphBuilder()
+    builder = GraphBuilder(project_path)
     graph = builder.build(classes)
 
     # Persist the graph

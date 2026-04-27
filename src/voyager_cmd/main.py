@@ -18,6 +18,7 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 from cli.commands.apply import apply_plan
+from cli.commands.apply import _find_project_root as _find_project_root_for_status
 from cli.commands.plan import plan_operation
 from cli.commands.scan import scan_project
 
@@ -85,10 +86,9 @@ def apply(ctx: click.Context, yes: bool) -> None:
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Show current project status and graph info."""
-    from pathlib import Path
     from storage.manager import StorageManager
 
-    manager = StorageManager(Path.cwd())
+    manager = StorageManager(_find_project_root_for_status())
     graph = manager.load_graph()
 
     if graph is None:

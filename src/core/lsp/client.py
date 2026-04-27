@@ -1,15 +1,7 @@
-"""Generic LSP client that drives any JSON-RPC based Language Server.
+"""Small JSON-RPC/LSP client used by Voyager.
 
-This is the "super client" — it speaks LSP protocol regardless of which
-language server is running on the backend (jdt.ls, pyright, clangd, etc.).
-
-Key capabilities exposed as high-level "meta-instructions":
-- get_impact_analysis(symbol): find all references to a symbol
-- find_definitions(position): go to definition
-- find_implementations(class): find interface/class implementations
-- rename_symbol(symbol, new_name): perform a semantic rename
-- get_diagnostics(file_path): validate code for errors
-- get_symbols(file_path): list all symbols in a file
+The client is intentionally thin.  It exposes LSP as a source of facts and
+edits; transactionality and validation live in the execution engine.
 """
 
 from __future__ import annotations
@@ -18,44 +10,43 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from core.lsp.config import Language, LanguageConfig, get_language_config
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class LspPosition:
-    """A position in a text document (0-indexed)."""
+    """A zero-based LSP document position."""
 
     line: int
     character: int
 
-    def to_lsp(self) -> dict:
+    def to_lsp(self) -> dict[str, int]:
         return {"line": self.line, "character": self.character}
 
 
-@dataclass
+@dataclass(frozen=True)
 class LspRange:
-    """A range in a text document."""
+    """A zero-based LSP document range."""
 
     start: LspPosition
     end: LspPosition
 
-    def to_lsp(self) -> dict:
-        return {
-            "start": self.start.to_lsp(),
-            "end": self.end.to_lsp(),
-        }
+    def to_lsp(self) -> dict[str, dict[str, int]]:
+        return {"start": self.start.to_lsp(), "end": self.end.to_lsp()}
 
 
-@dataclass
+@dataclass(frozen=True)
 class LspLocation:
-    """A location in a file."""
+    """A source location returned by an LSP server."""
 
     uri: str
     range: LspRange
@@ -63,20 +54,20 @@ class LspLocation:
 
 @dataclass
 class LspSymbolInfo:
-    """Symbol information extracted from LSP."""
+    """DocumentSymbol information returned by an LSP server."""
 
     name: str
-    kind: int  # LSP SymbolKind
+    kind: int
     detail: str = ""
     uri: str = ""
     range: LspRange | None = None
     selection_range: LspRange | None = None
-    children: list[LspSymbolInfo] = field(default_factory=list)
+    children: list["LspSymbolInfo"] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True)
 class LspTextEdit:
-    """A text edit operation from LSP."""
+    """A single LSP text edit."""
 
     range: LspRange
     new_text: str
@@ -84,454 +75,469 @@ class LspTextEdit:
 
 @dataclass
 class LspWorkspaceEdit:
-    """A workspace edit from LSP (rename results)."""
+    """A parsed subset of WorkspaceEdit.
+
+    V1 supports the two common shapes emitted by language servers:
+    ``changes`` and ``documentChanges`` containing text document edits.
+    """
 
     changes: dict[str, list[LspTextEdit]] = field(default_factory=dict)
 
+    @property
+    def is_empty(self) -> bool:
+        return not any(self.changes.values())
+
+
+def path_to_uri(path: Path) -> str:
+    """Convert a local path to a file URI."""
+
+    return path.resolve().as_uri()
+
+
+def uri_to_path(uri: str) -> Path:
+    """Convert a file URI to a local path."""
+
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return Path(uri)
+    if os.name == "nt":
+        raw_path = unquote(parsed.path)
+        if raw_path.startswith("/") and len(raw_path) >= 3 and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        return Path(url2pathname(raw_path))
+    return Path(unquote(parsed.path))
+
 
 class LspClient:
-    """Generic LSP client that communicates with any language server via stdio.
-
-    Usage:
-        client = LspClient(Language.JAVA, project_path=Path("/my/project"))
-        await client.start()
-        symbols = await client.get_symbols(file_path)
-        refs = await client.get_references(file_path, position)
-        await client.shutdown()
-    """
+    """Generic LSP client that talks JSON-RPC over stdio."""
 
     def __init__(
         self,
         language: Language,
         project_path: Path,
         config: LanguageConfig | None = None,
+        request_timeout: float = 30.0,
     ) -> None:
         self.language = language
-        self.project_path = project_path
+        self.project_path = project_path.resolve()
         self.config = config or get_language_config(language)
+        self.request_timeout = request_timeout
 
-        self._process: subprocess.Popen | None = None
+        self._process: asyncio.subprocess.Process | None = None
         self._request_id = 0
         self._initialized = False
-        self._root_uri = self._path_to_uri(project_path)
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._open_files: dict[str, int] = {}
+        self._diagnostics_cache: dict[str, list[dict[str, Any]]] = {}
 
-    def _path_to_uri(self, path: Path) -> str:
-        """Convert a file path to a file URI."""
-        abs_path = path.resolve()
-        if os.name == "nt":
-            return f"file:///{abs_path.as_posix().lstrip('/')}"
-        return f"file://{abs_path.as_posix()}"
+    async def __aenter__(self) -> "LspClient":
+        await self.start()
+        return self
 
-    def _file_to_uri(self, file_path: Path) -> str:
-        """Convert a file path to a file URI."""
-        return self._path_to_uri(file_path)
+    async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        await self.shutdown()
 
     async def start(self) -> None:
-        """Start the language server process and perform LSP initialization."""
+        """Start the language server and run the initialize handshake."""
+
+        if self._initialized:
+            return
+
         cmd = self.config.find_server_command()
         if cmd is None:
             raise RuntimeError(
-                f"LSP server for '{self.language.value}' not found. "
-                f"Please install: {' '.join(self.config.command)}"
+                f"LSP server for '{self.language.value}' was not found. "
+                f"Install it or put '{self.config.command[0]}' on PATH."
             )
 
-        logger.info("Starting LSP server: %s", " ".join(cmd))
-
         env = os.environ.copy()
-        # Set workspace for jdt.ls
-        if self.language == Language.JAVA:
-            workspace = self.project_path / ".voyager" / "cache" / "jdtls-workspace"
-            workspace.mkdir(parents=True, exist_ok=True)
-            env["JDTLS_WORKSPACE"] = str(workspace)
 
+        if self.language == Language.JAVA and "-data" not in cmd:
+            workspace = self._jdtls_workspace_path()
+            workspace.mkdir(parents=True, exist_ok=True)
+            cmd = [*cmd, "-data", str(workspace)]
+
+        logger.info("Starting LSP server: %s", " ".join(cmd))
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
             cwd=str(self.project_path),
+            env=env,
         )
+        self._reader_task = asyncio.create_task(self._read_loop())
 
-        # Perform LSP handshake
-        await self._send_request("initialize", {
-            "processId": os.getpid(),
-            "rootUri": self._root_uri,
-            "rootPath": str(self.project_path),
-            "capabilities": {
-                "textDocument": {
-                    "definition": {"dynamicRegistration": False},
-                    "references": {"dynamicRegistration": False},
-                    "implementation": {"dynamicRegistration": False},
-                    "rename": {"prepareSupport": True},
-                    "documentSymbol": {"dynamicRegistration": False},
-                    "hover": {"dynamicRegistration": False},
-                    "semanticTokens": {"dynamicRegistration": False},
+        await self._send_request(
+            "initialize",
+            {
+                "processId": os.getpid(),
+                "rootUri": path_to_uri(self.project_path),
+                "rootPath": str(self.project_path),
+                "workspaceFolders": [
+                    {"uri": path_to_uri(self.project_path), "name": self.project_path.name}
+                ],
+                "capabilities": {
+                    "textDocument": {
+                        "definition": {"dynamicRegistration": False},
+                        "references": {"dynamicRegistration": False},
+                        "implementation": {"dynamicRegistration": False},
+                        "rename": {"prepareSupport": True},
+                        "documentSymbol": {"dynamicRegistration": False},
+                        "synchronization": {
+                            "didOpen": True,
+                            "didChange": True,
+                            "willSave": False,
+                            "willSaveWaitUntil": False,
+                            "didSave": False,
+                        },
+                    },
+                    "workspace": {
+                        "applyEdit": False,
+                        "workspaceEdit": {
+                            "documentChanges": True,
+                            "resourceOperations": [],
+                        },
+                    },
                 },
-                "workspace": {
-                    "symbol": {"dynamicRegistration": False},
-                },
+                "initializationOptions": self.config.initialization_options,
             },
-            "initializationOptions": self.config.initialization_options,
-        })
-
-        # Send initialized notification
+        )
         await self._send_notification("initialized", {})
-
         self._initialized = True
-        logger.info("LSP server initialized for %s", self.language.value)
 
     async def shutdown(self) -> None:
         """Gracefully shut down the language server."""
-        if not self._initialized or self._process is None:
+
+        process = self._process
+        if process is None:
             return
 
         try:
-            await self._send_request("shutdown", None)
-            await self._send_notification("exit", None)
-            await asyncio.wait_for(self._process.wait(), timeout=5.0)
-        except Exception as e:
-            logger.warning("Error during LSP shutdown: %s", e)
-            if self._process.returncode is None:
-                self._process.kill()
+            if self._initialized:
+                await self._send_request("shutdown", None)
+                await self._send_notification("exit", None)
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+        except Exception as exc:
+            logger.warning("LSP shutdown failed: %s", exc)
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
         finally:
-            self._initialized = False
+            if self._reader_task is not None:
+                self._reader_task.cancel()
+            for future in self._pending.values():
+                if not future.done():
+                    future.cancel()
+            self._pending.clear()
+            self._reader_task = None
             self._process = None
+            self._initialized = False
 
-    # ── High-level "meta-instructions" ──────────────────────────────
+    def _jdtls_workspace_path(self) -> Path:
+        """Return a JDT LS workspace outside the analyzed project tree."""
+
+        digest = hashlib.sha1(str(self.project_path).encode("utf-8")).hexdigest()[:16]
+        cache_root = Path(
+            os.environ.get("LOCALAPPDATA")
+            or os.environ.get("APPDATA")
+            or os.environ.get("TEMP")
+            or str(self.project_path.parent)
+        )
+        return cache_root / "Voyager" / "jdtls-workspaces" / digest
 
     async def get_symbols(self, file_path: Path) -> list[LspSymbolInfo]:
-        """List all symbols (classes, fields, methods) in a file.
+        """Return all document symbols for a file."""
 
-        Wraps textDocument/documentSymbol.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/documentSymbol", {
-            "textDocument": {"uri": uri},
-        })
-        return self._parse_symbols(result, uri) if result else []
+        await self.open_file(file_path)
+        uri = path_to_uri(file_path)
+        result = await self._send_request(
+            "textDocument/documentSymbol",
+            {"textDocument": {"uri": uri}},
+        )
+        return self._parse_symbols(result or [], uri)
 
     async def get_references(
-        self, file_path: Path, position: LspPosition
+        self,
+        file_path: Path,
+        position: LspPosition,
+        include_declaration: bool = True,
     ) -> list[LspLocation]:
-        """Find all references to the symbol at the given position.
+        """Find references for the symbol at ``position``."""
 
-        Wraps textDocument/references. This is the core of impact analysis.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/references", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-            "context": {"includeDeclaration": True},
-        })
-        return [
-            LspLocation(
-                uri=item["uri"],
-                range=LspRange(
-                    start=LspPosition(**item["range"]["start"]),
-                    end=LspPosition(**item["range"]["end"]),
-                ),
-            )
-            for item in (result or [])
-        ]
+        await self.open_file(file_path)
+        result = await self._send_request(
+            "textDocument/references",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "position": position.to_lsp(),
+                "context": {"includeDeclaration": include_declaration},
+            },
+        )
+        return [self._parse_location(item) for item in result or []]
 
     async def find_definitions(
         self, file_path: Path, position: LspPosition
     ) -> list[LspLocation]:
-        """Go to definition for the symbol at position.
+        """Find definitions for the symbol at ``position``."""
 
-        Wraps textDocument/definition.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/definition", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-        })
-        if not result:
-            return []
-        locations = result if isinstance(result, list) else [result]
-        return [
-            LspLocation(
-                uri=loc["uri"],
-                range=LspRange(
-                    start=LspPosition(**loc["range"]["start"]),
-                    end=LspPosition(**loc["range"]["end"]),
-                ),
-            )
-            for loc in locations
-        ]
+        await self.open_file(file_path)
+        result = await self._send_request(
+            "textDocument/definition",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "position": position.to_lsp(),
+            },
+        )
+        items = result if isinstance(result, list) else [result] if result else []
+        return [self._parse_location(item) for item in items]
 
     async def find_implementations(
         self, file_path: Path, position: LspPosition
     ) -> list[LspLocation]:
-        """Find all implementations of the interface/class at position.
+        """Find implementations for the symbol at ``position``."""
 
-        Wraps textDocument/implementation.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/implementation", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-        })
+        await self.open_file(file_path)
+        result = await self._send_request(
+            "textDocument/implementation",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "position": position.to_lsp(),
+            },
+        )
+        items = result if isinstance(result, list) else [result] if result else []
+        return [self._parse_location(item) for item in items]
+
+    async def prepare_rename(self, file_path: Path, position: LspPosition) -> LspRange | None:
+        """Ask the server whether a location can be renamed."""
+
+        await self.open_file(file_path)
+        result = await self._send_request(
+            "textDocument/prepareRename",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "position": position.to_lsp(),
+            },
+        )
         if not result:
-            return []
-        locations = result if isinstance(result, list) else [result]
-        return [
-            LspLocation(
-                uri=loc["uri"],
-                range=LspRange(
-                    start=LspPosition(**loc["range"]["start"]),
-                    end=LspPosition(**loc["range"]["end"]),
-                ),
-            )
-            for loc in locations
-        ]
+            return None
+        raw_range = result.get("range", result)
+        return self._parse_range(raw_range)
 
     async def rename_symbol(
         self, file_path: Path, position: LspPosition, new_name: str
     ) -> LspWorkspaceEdit:
-        """Perform a semantic rename of the symbol at position.
+        """Use ``textDocument/rename`` to produce semantic edits."""
 
-        Wraps textDocument/rename. The server computes all edits needed.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/rename", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-            "newName": new_name,
-        })
-        edit = LspWorkspaceEdit()
-        if result and "changes" in result:
-            for file_uri, text_edits in result["changes"].items():
-                edit.changes[file_uri] = [
-                    LspTextEdit(
-                        range=LspRange(
-                            start=LspPosition(**te["range"]["start"]),
-                            end=LspPosition(**te["range"]["end"]),
-                        ),
-                        new_text=te["newText"],
-                    )
-                    for te in text_edits
-                ]
-        return edit
-
-    async def prepare_rename(
-        self, file_path: Path, position: LspPosition
-    ) -> LspRange | None:
-        """Prepare a rename to check if the position is renameable.
-
-        Returns the range of the symbol, or None if rename is not possible.
-        """
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/prepareRename", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-        })
-        if not result:
-            return None
-        return LspRange(
-            start=LspPosition(**result["range"]["start"]),
-            end=LspPosition(**result["range"]["end"]),
+        await self.open_file(file_path)
+        result = await self._send_request(
+            "textDocument/rename",
+            {
+                "textDocument": {"uri": path_to_uri(file_path)},
+                "position": position.to_lsp(),
+                "newName": new_name,
+            },
         )
+        return self._parse_workspace_edit(result or {})
 
-    async def get_diagnostics(self, file_path: Path) -> list[dict]:
-        """Get diagnostics (errors, warnings) for a file.
+    async def get_diagnostics(self, file_path: Path) -> list[dict[str, Any]]:
+        """Return the latest diagnostics published for a file."""
 
-        Note: LSP servers push diagnostics automatically after didOpen/didChange.
-        This method returns the cached diagnostics from the last server update.
-        """
-        # Diagnostics are push-based in LSP; this is a placeholder
-        # that ensures the file is open so diagnostics are up-to-date.
-        await self._ensure_file_open(file_path)
-        # Diagnostics arrive asynchronously via notifications.
-        # For synchronous use, callers should open files first and wait briefly.
-        return self._diagnostics_cache.get(self._file_to_uri(file_path), [])
-
-    async def hover(
-        self, file_path: Path, position: LspPosition
-    ) -> str | None:
-        """Get hover information for the symbol at position."""
-        uri = self._file_to_uri(file_path)
-        result = await self._send_request("textDocument/hover", {
-            "textDocument": {"uri": uri},
-            "position": position.to_lsp(),
-        })
-        if result and "contents" in result:
-            contents = result["contents"]
-            if isinstance(contents, dict):
-                return contents.get("value", "")
-            return str(contents)
-        return None
-
-    # ── Internal: file management ───────────────────────────────────
+        await self.open_file(file_path)
+        return self._diagnostics_cache.get(path_to_uri(file_path), [])
 
     async def open_file(self, file_path: Path) -> None:
-        """Open a file in the language server (required before queries)."""
-        content = file_path.read_text(encoding="utf-8")
-        uri = self._file_to_uri(file_path)
-        await self._send_notification("textDocument/didOpen", {
-            "textDocument": {
-                "uri": uri,
-                "languageId": self.language.value,
-                "version": 0,
-                "text": content,
-            }
-        })
-        self._open_files[uri] = content
+        """Notify the language server that a file is open."""
 
-    async def _ensure_file_open(self, file_path: Path) -> None:
-        """Ensure a file is open in the language server."""
-        uri = self._file_to_uri(file_path)
+        uri = path_to_uri(file_path)
+        if uri in self._open_files:
+            return
+        text = file_path.read_text(encoding="utf-8")
+        await self._send_notification(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": self.language.value,
+                    "version": 1,
+                    "text": text,
+                }
+            },
+        )
+        self._open_files[uri] = 1
+
+    async def change_file(self, file_path: Path, text: str) -> None:
+        """Update an already-open document in the server."""
+
+        uri = path_to_uri(file_path)
         if uri not in self._open_files:
             await self.open_file(file_path)
-
-    # ── Internal: LSP protocol ──────────────────────────────────────
+        version = self._open_files.get(uri, 1) + 1
+        self._open_files[uri] = version
+        await self._send_notification(
+            "textDocument/didChange",
+            {
+                "textDocument": {"uri": uri, "version": version},
+                "contentChanges": [{"text": text}],
+            },
+        )
 
     async def _send_request(self, method: str, params: Any) -> Any:
-        """Send a JSON-RPC request and wait for the response."""
         self._request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "id": self._request_id,
-            "method": method,
-            "params": params,
-        }
-        return await self._send_and_receive(request, expect_response_id=self._request_id)
+        request_id = self._request_id
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        self._pending[request_id] = future
+        await self._write_message(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            }
+        )
+        try:
+            return await asyncio.wait_for(future, timeout=self.request_timeout)
+        finally:
+            self._pending.pop(request_id, None)
 
     async def _send_notification(self, method: str, params: Any) -> None:
-        """Send a JSON-RPC notification (no response expected)."""
-        notification = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        }
-        await self._write_message(notification)
+        await self._write_message({"jsonrpc": "2.0", "method": method, "params": params})
 
-    async def _send_and_receive(
-        self, request: dict, expect_response_id: int
-    ) -> Any:
-        """Write a request and wait for the matching response."""
-        assert self._process and self._process.stdin and self._process.stdout
-
-        # Start a reader task for the response
-        response_future: asyncio.Future = asyncio.get_event_loop().create_future()
-
-        async def _read_responses() -> None:
-            while True:
-                try:
-                    msg = await self._read_message()
-                    if msg is None:
-                        break
-                    if "id" in msg and msg.get("id") == expect_response_id:
-                        if "error" in msg:
-                            response_future.set_exception(
-                                RuntimeError(
-                                    f"LSP error: {msg['error']}"
-                                )
-                            )
-                        else:
-                            response_future.set_result(msg.get("result"))
-                        break
-                    else:
-                        # Handle notifications (e.g., window/logMessage, textDocument/publishDiagnostics)
-                        self._handle_notification(msg)
-                except Exception as e:
-                    if not response_future.done():
-                        response_future.set_exception(e)
-                    break
-
-        reader_task = asyncio.create_task(_read_responses())
-        await self._write_message(request)
-
-        try:
-            return await asyncio.wait_for(response_future, timeout=30.0)
-        except asyncio.TimeoutError:
-            reader_task.cancel()
-            raise TimeoutError(
-                f"LSP request '{request['method']}' timed out after 30s"
-            )
-
-    def _handle_notification(self, msg: dict) -> None:
-        """Handle incoming LSP notifications."""
-        method = msg.get("method", "")
-        if method == "textDocument/publishDiagnostics":
-            params = msg.get("params", {})
-            uri = params.get("uri", "")
-            self._diagnostics_cache[uri] = params.get("diagnostics", [])
-        elif method == "window/logMessage":
-            level = msg.get("params", {}).get("type", "info")
-            text = msg.get("params", {}).get("message", "")
-            log_fn = {
-                1: logger.error,
-                2: logger.warning,
-                3: logger.info,
-                4: logger.debug,
-            }.get(level, logger.info)
-            log_fn("LSP: %s", text)
-        elif method == "window/showMessage":
-            text = msg.get("params", {}).get("message", "")
-            logger.info("LSP message: %s", text)
-
-    async def _write_message(self, message: dict) -> None:
-        """Write a JSON-RPC message to the LSP server's stdin."""
-        assert self._process and self._process.stdin
-        body = json.dumps(message).encode("utf-8")
+    async def _write_message(self, message: dict[str, Any]) -> None:
+        if self._process is None or self._process.stdin is None:
+            raise RuntimeError("LSP server is not running")
+        body = json.dumps(message, separators=(",", ":")).encode("utf-8")
         header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
         self._process.stdin.write(header + body)
         await self._process.stdin.drain()
 
-    async def _read_message(self) -> dict | None:
-        """Read a JSON-RPC message from the LSP server's stdout."""
-        assert self._process and self._process.stdout
+    async def _read_loop(self) -> None:
+        while True:
+            try:
+                message = await self._read_message()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("LSP read loop stopped: %s", exc)
+                self._fail_pending(exc)
+                return
 
-        # Read headers
-        content_length = 0
+            if message is None:
+                self._fail_pending(RuntimeError("LSP server closed stdout"))
+                return
+
+            response_id = message.get("id")
+            if response_id is not None and response_id in self._pending:
+                future = self._pending[response_id]
+                if future.done():
+                    continue
+                if "error" in message:
+                    future.set_exception(RuntimeError(f"LSP error: {message['error']}"))
+                else:
+                    future.set_result(message.get("result"))
+                continue
+
+            self._handle_notification(message)
+
+    async def _read_message(self) -> dict[str, Any] | None:
+        if self._process is None or self._process.stdout is None:
+            raise RuntimeError("LSP server is not running")
+
+        content_length: int | None = None
         while True:
             line = await self._process.stdout.readline()
             if not line:
                 return None
-            line = line.decode("ascii").strip()
-            if line.startswith("Content-Length:"):
-                content_length = int(line.split(":", 1)[1].strip())
-            elif line == "":
+            header = line.decode("ascii", errors="replace").strip()
+            if not header:
                 break
+            name, _, value = header.partition(":")
+            if name.lower() == "content-length":
+                content_length = int(value.strip())
 
-        if content_length == 0:
+        if content_length is None:
             return None
-
-        # Read body
         body = await self._process.stdout.readexactly(content_length)
         return json.loads(body.decode("utf-8"))
 
-    def _parse_symbols(
-        self, raw: list[dict], uri: str
-    ) -> list[LspSymbolInfo]:
-        """Recursively parse LSP DocumentSymbol response."""
+    def _fail_pending(self, exc: Exception) -> None:
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(exc)
+
+    def _handle_notification(self, message: dict[str, Any]) -> None:
+        method = message.get("method")
+        params = message.get("params", {})
+        if method == "textDocument/publishDiagnostics":
+            self._diagnostics_cache[params.get("uri", "")] = params.get("diagnostics", [])
+        elif method == "window/logMessage":
+            msg = params.get("message", "")
+            level = params.get("type", 3)
+            log = {1: logger.error, 2: logger.warning, 3: logger.info}.get(
+                level, logger.debug
+            )
+            log("LSP: %s", msg)
+        elif method == "window/showMessage":
+            logger.info("LSP message: %s", params.get("message", ""))
+
+    def _parse_workspace_edit(self, raw: dict[str, Any]) -> LspWorkspaceEdit:
+        edit = LspWorkspaceEdit()
+
+        for uri, text_edits in raw.get("changes", {}).items():
+            edit.changes.setdefault(uri, []).extend(
+                self._parse_text_edit(item) for item in text_edits
+            )
+
+        for change in raw.get("documentChanges", []) or []:
+            if "textDocument" not in change:
+                continue
+            uri = change["textDocument"]["uri"]
+            edit.changes.setdefault(uri, []).extend(
+                self._parse_text_edit(item) for item in change.get("edits", [])
+            )
+
+        return edit
+
+    def _parse_symbols(self, raw: list[dict[str, Any]], uri: str) -> list[LspSymbolInfo]:
         symbols: list[LspSymbolInfo] = []
         for item in raw:
-            sym_range = LspRange(
-                start=LspPosition(**item["range"]["start"]),
-                end=LspPosition(**item["range"]["end"]),
-            ) if "range" in item else None
-            sel_range = LspRange(
-                start=LspPosition(**item["selectionRange"]["start"]),
-                end=LspPosition(**item["selectionRange"]["end"]),
-            ) if "selectionRange" in item else None
+            if "location" in item:
+                location = item["location"]
+                symbol_range = self._parse_range(location["range"])
+                selection_range = symbol_range
+                symbol_uri = location.get("uri", uri)
+            else:
+                symbol_range = self._parse_range(item["range"]) if "range" in item else None
+                selection_range = (
+                    self._parse_range(item["selectionRange"])
+                    if "selectionRange" in item
+                    else symbol_range
+                )
+                symbol_uri = uri
 
-            children = self._parse_symbols(item.get("children", []), uri)
-            symbols.append(LspSymbolInfo(
-                name=item.get("name", ""),
-                kind=item.get("kind", 0),
-                detail=item.get("detail", ""),
-                uri=uri,
-                range=sym_range,
-                selection_range=sel_range,
-                children=children,
-            ))
+            symbols.append(
+                LspSymbolInfo(
+                    name=item.get("name", ""),
+                    kind=item.get("kind", 0),
+                    detail=item.get("detail", ""),
+                    uri=symbol_uri,
+                    range=symbol_range,
+                    selection_range=selection_range,
+                    children=self._parse_symbols(item.get("children", []), symbol_uri),
+                )
+            )
         return symbols
 
-    # ── State ───────────────────────────────────────────────────────
+    def _parse_location(self, raw: dict[str, Any]) -> LspLocation:
+        return LspLocation(uri=raw["uri"], range=self._parse_range(raw["range"]))
 
-    _open_files: dict[str, str] = field(default_factory=dict)
-    _diagnostics_cache: dict[str, list[dict]] = field(default_factory=dict)
+    def _parse_text_edit(self, raw: dict[str, Any]) -> LspTextEdit:
+        return LspTextEdit(range=self._parse_range(raw["range"]), new_text=raw["newText"])
+
+    def _parse_range(self, raw: dict[str, Any]) -> LspRange:
+        return LspRange(
+            start=LspPosition(**raw["start"]),
+            end=LspPosition(**raw["end"]),
+        )

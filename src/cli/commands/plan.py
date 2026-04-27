@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.console import Console
-from rich.panel import Panel
-
 from core.engine.execution_engine import ExecutionEngine
 from core.operation.models import AddFieldOp, Operation, RemoveFieldOp, RenameFieldOp
 from storage.manager import StorageManager
@@ -55,8 +53,7 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
         for fp in result.affected_files:
             console.print(f"  - {fp}")
 
-        # Save plan for later apply
-        _save_pending_plan(operation, project_path)
+        storage.save_pending_plan(operation)
 
         return result
     else:
@@ -65,7 +62,7 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
             action = v.get("action", "error")
             msg = v.get("message", str(v))
             style = "red" if action == "error" else "yellow"
-            console.print(f"  [{style}][{action}][/style] {msg}")
+            console.print(f"  [{style}][{action}][/{style}] {msg}")
         return result
 
 
@@ -78,12 +75,15 @@ def _build_operation(op_type: str, target: str, value: str | None) -> Operation:
     elif op_type == "add_field":
         parts = target.split(".", 1)
         class_name = parts[0]
-        field_name = value or parts[1] if len(parts) > 1 else ""
+        field_name = value or (parts[1] if len(parts) > 1 else "")
         if not field_name:
             raise ValueError("'add_field' requires <class> <field_name> [type]")
         return AddFieldOp(target=class_name, field_name=field_name)
     elif op_type == "remove_field":
-        return RemoveFieldOp(target=target.split(".", 1)[0], field_name=target.split(".", 1)[1])
+        parts = target.split(".", 1)
+        if len(parts) != 2:
+            raise ValueError("'remove_field' requires target in format ClassName.fieldName")
+        return RemoveFieldOp(target=parts[0], field_name=parts[1])
     else:
         raise ValueError(f"Unknown operation type: {op_type}")
 
@@ -97,12 +97,3 @@ def _find_project_root() -> Path:
         current = current.parent
     return Path.cwd()
 
-
-def _save_pending_plan(operation: Operation, project_path: Path) -> None:
-    """Save the pending operation to .voyager for later apply."""
-    import json
-    plan_file = project_path / ".voyager" / "pending_plan.json"
-    plan_file.write_text(
-        json.dumps(operation.model_dump(mode="json"), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )

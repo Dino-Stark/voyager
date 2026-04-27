@@ -1,30 +1,24 @@
-"""Execution engine.
-
-Core engine that executes semantic operations following the strict pipeline:
-  Plan -> Validate -> Apply (in-memory) -> Re-parse -> Validate again -> Commit (write files)
-
-Uses LSP (Language Server Protocol) for precise semantic operations:
-- rename_field: delegates to textDocument/rename for accurate cross-file renaming
-- references: delegates to textDocument/references for impact analysis
-
-Ensures strong consistency (all-or-nothing) and full reversibility.
-"""
+"""Execution engine for Voyager's semantic operations."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from core.engine.errors import (
     EngineError,
+    ErrorType,
+    LspUnavailableError,
     SymbolNotFoundError,
-    ValidationError,
+    UnsupportedOperationError,
 )
 from core.graph.builder import GraphBuilder
 from core.graph.semantic_graph import SemanticGraph
-from core.lsp.client import LspClient, LspPosition
-from core.lsp.config import Language
+from core.lsp.client import LspClient, LspPosition, LspTextEdit, uri_to_path
+from core.lsp.config import Language, get_language_config
 from core.operation.models import (
     AddFieldOp,
     ApplyResult,
@@ -33,56 +27,54 @@ from core.operation.models import (
     RemoveFieldOp,
     RenameFieldOp,
 )
-from core.parser.java_parser import parse_java_project
+from core.parser.java_parser import parse_java_project, parse_java_project_static_with_overrides
 from core.rules.validator import RuleValidator
 from storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
 
-class ExecutionEngine:
-    """Executes semantic operations with strong consistency guarantees.
+@dataclass(frozen=True)
+class FilePatch:
+    path: Path
+    original: str
+    modified: str
 
-    Uses LSP for precise semantic operations when available,
-    falling back to AST-based analysis otherwise.
-    """
+
+class ExecutionEngine:
+    """Plan and execute operations with all-or-nothing semantics."""
 
     def __init__(self, project_path: Path, storage: StorageManager | None = None) -> None:
-        self.project_path = project_path
-        self.storage = storage or StorageManager(project_path)
+        self.project_path = project_path.resolve()
+        self.storage = storage or StorageManager(self.project_path)
         self.graph: SemanticGraph | None = None
-        self.validator = RuleValidator()
-        self._lsp_client: LspClient | None = None
+        self.validator = RuleValidator(self.storage.load_rules_path())
 
-    async def _get_lsp_client(self) -> LspClient:
-        """Get or create an LSP client connection."""
-        if self._lsp_client is None:
-            self._lsp_client = LspClient(Language.JAVA, project_path=self.project_path)
-            await self._lsp_client.start()
-        return self._lsp_client
+    def ensure_graph(self, force_rebuild: bool = False) -> SemanticGraph:
+        """Load a graph from storage or build one from source."""
 
-    async def _close_lsp_client(self) -> None:
-        """Gracefully close the LSP client."""
-        if self._lsp_client is not None:
-            await self._lsp_client.shutdown()
-            self._lsp_client = None
-
-    def ensure_graph(self) -> SemanticGraph:
-        """Load or build the semantic graph."""
-        if self.graph is not None:
+        if self.graph is not None and not force_rebuild:
             return self.graph
-        self.graph = self.storage.load_graph()
-        if self.graph is None:
+
+        graph = None if force_rebuild else self.storage.load_graph()
+        if graph is None:
             classes = parse_java_project(self.project_path)
-            builder = GraphBuilder()
-            self.graph = builder.build(classes)
-            self.storage.save_graph(self.graph)
-        return self.graph
+            graph = GraphBuilder(self.project_path).build(classes)
+            self.storage.save_graph(graph)
+
+        self.graph = graph
+        return graph
+
+    def rebuild_graph_static(self, file_overrides: dict[Path, str] | None = None) -> SemanticGraph:
+        """Rebuild the graph with optional in-memory file content."""
+
+        classes = parse_java_project_static_with_overrides(self.project_path, file_overrides or {})
+        return GraphBuilder(self.project_path).build(classes)
 
     def plan(self, operation: Operation) -> PlanResult:
-        """Plan an operation: validate preconditions and compute affected files."""
-        graph = self.ensure_graph()
+        """Validate an operation and compute the likely affected files."""
 
+        graph = self.ensure_graph()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
             return PlanResult(
@@ -92,51 +84,44 @@ class ExecutionEngine:
                 is_valid=False,
             )
 
-        affected_files = self._compute_affected_files(graph, operation)
         return PlanResult(
             operation=operation,
-            affected_files=affected_files,
+            affected_files=self._compute_affected_files(graph, operation),
             violations=[],
             is_valid=True,
         )
 
     def apply(self, operation: Operation) -> ApplyResult:
-        """Apply an operation following the strict pipeline.
+        """Apply an operation through the fixed V1 pipeline."""
 
-        Pipeline: Validate -> Apply (in-memory) -> Re-parse -> Validate -> Commit.
-        """
         graph = self.ensure_graph()
-
         violations = self.validator.validate_pre(graph, operation)
         if violations:
-            return ApplyResult(
-                success=False,
-                operation=operation,
-                errors=violations,
-            )
+            return ApplyResult(success=False, operation=operation, errors=violations)
 
         try:
-            if isinstance(operation, RenameFieldOp):
-                # Use LSP for precise rename
-                file_buffers = self._apply_rename_via_lsp(graph, operation)
-            else:
-                file_buffers = self._apply_in_memory(graph, operation)
+            patches = self._build_patches(graph, operation)
+            if not patches:
+                raise EngineError(
+                    ErrorType.VALIDATION_FAILED,
+                    "Operation produced no file changes",
+                    target=_operation_target(operation),
+                )
 
-            new_graph = self._reparse_files(file_buffers, graph)
+            overrides = {patch.path: patch.modified for patch in patches}
+            new_graph = self.rebuild_graph_static(overrides)
 
             post_violations = self.validator.validate_post(new_graph, operation)
             if post_violations:
-                logger.warning("Post-validation failed, aborting: %s", post_violations)
                 return ApplyResult(
                     success=False,
                     operation=operation,
                     errors=post_violations,
                 )
 
-            modified_files = self._commit(file_buffers)
-
+            modified_files = self._commit(patches)
             self.graph = new_graph
-            self.storage.save_graph(self.graph)
+            self.storage.save_graph(new_graph)
             self.storage.log_operation(operation, modified_files)
 
             return ApplyResult(
@@ -144,229 +129,221 @@ class ExecutionEngine:
                 operation=operation,
                 modified_files=modified_files,
             )
+        except EngineError as exc:
+            logger.error("Apply failed: %s", exc)
+            return ApplyResult(success=False, operation=operation, errors=[exc.to_dict()])
+        except Exception as exc:
+            logger.exception("Unexpected apply failure")
+            error = EngineError(
+                ErrorType.INTERNAL_ERROR,
+                str(exc),
+                target=_operation_target(operation),
+            )
+            return ApplyResult(success=False, operation=operation, errors=[error.to_dict()])
 
-        except EngineError as e:
-            logger.error("Engine error during apply: %s", e)
-            return ApplyResult(
-                success=False,
-                operation=operation,
-                errors=[e.to_dict()],
+    def _build_patches(self, graph: SemanticGraph, operation: Operation) -> list[FilePatch]:
+        if isinstance(operation, RenameFieldOp):
+            return self._build_rename_patches(graph, operation)
+        if isinstance(operation, AddFieldOp):
+            raise UnsupportedOperationError("add_field is declared but not implemented in V1")
+        if isinstance(operation, RemoveFieldOp):
+            raise UnsupportedOperationError("remove_field is declared but not implemented in V1")
+        raise UnsupportedOperationError(f"Unsupported operation: {operation}")
+
+    def _build_rename_patches(
+        self, graph: SemanticGraph, operation: RenameFieldOp
+    ) -> list[FilePatch]:
+        field_symbol = graph.resolve_field(operation.class_name, operation.field_name)
+        if field_symbol is None:
+            raise SymbolNotFoundError(operation.target)
+
+        source_path = self._project_file_path(field_symbol.file_path)
+        if not source_path.exists():
+            raise SymbolNotFoundError(operation.target, file_path=str(source_path))
+        if field_symbol.line <= 0 or field_symbol.column <= 0:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Target field has no source position; run scan again",
+                target=operation.target,
+                file_path=str(source_path),
             )
 
-    def _compute_affected_files(self, graph: SemanticGraph, operation: Operation) -> list[str]:
-        """Compute the list of files affected by an operation."""
-        if isinstance(operation, RenameFieldOp):
-            return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
-        elif isinstance(operation, AddFieldOp):
-            symbol = graph.get_symbol(operation.class_name)
-            return [symbol.file_path] if symbol else []
-        elif isinstance(operation, RemoveFieldOp):
-            return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
-        return []
+        if get_language_config(Language.JAVA).find_server_command() is None:
+            raise LspUnavailableError(
+                "rename_field requires jdtls on PATH so Voyager can use LSP semantic rename",
+                target=operation.target,
+            )
 
-    def _apply_rename_via_lsp(
-        self, graph: SemanticGraph, operation: RenameFieldOp
-    ) -> dict[Path, str]:
-        """Rename a field using LSP textDocument/rename for maximum precision.
+        workspace_edit = _run_async(self._request_lsp_rename(source_path, field_symbol, operation))
+        if workspace_edit.is_empty:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "LSP returned an empty rename edit",
+                target=operation.target,
+            )
 
-        This delegates the rename to jdt.ls which understands the full
-        semantic context (inheritance, generics, type resolution) and
-        computes all necessary edits across all files.
-        """
-        target_id = f"{operation.class_name}.{operation.field_name}"
-        field_symbol = graph.get_symbol(target_id)
-        if field_symbol is None:
-            raise SymbolNotFoundError(target_id)
+        patches: list[FilePatch] = []
+        for uri, edits in workspace_edit.changes.items():
+            path = uri_to_path(uri).resolve()
+            self._assert_inside_project(path)
+            if not path.exists():
+                raise EngineError(
+                    ErrorType.WRITE_ERROR,
+                    "LSP returned an edit for a missing file",
+                    target=operation.target,
+                    file_path=str(path),
+                )
+            original = path.read_text(encoding="utf-8")
+            modified = apply_lsp_edits(original, edits)
+            modified = _normalize_newlines(modified, original)
+            if original != modified:
+                patches.append(FilePatch(path=path, original=original, modified=modified))
 
-        file_path = Path(field_symbol.file_path)
-        if not file_path.exists():
-            raise SymbolNotFoundError(target_id, file_path=str(file_path))
+        return patches
 
-        async def _do_lsp_rename() -> dict[Path, str]:
-            client = await self._get_lsp_client()
-            await client.open_file(file_path)
-
-            # LSP positions are 0-indexed; our symbols store 1-indexed lines
+    async def _request_lsp_rename(
+        self,
+        source_path: Path,
+        field_symbol: Any,
+        operation: RenameFieldOp,
+    ):
+        async with LspClient(Language.JAVA, self.project_path) as client:
             position = LspPosition(
                 line=field_symbol.line - 1,
                 character=field_symbol.column - 1,
             )
+            rename_range = await client.prepare_rename(source_path, position)
+            if rename_range is None:
+                raise EngineError(
+                    ErrorType.VALIDATION_FAILED,
+                    "LSP rejected this location for rename",
+                    target=operation.target,
+                    file_path=str(source_path),
+                )
+            return await client.rename_symbol(source_path, position, operation.to)
 
-            # Perform the rename via LSP
-            workspace_edit = await client.rename_symbol(
-                file_path, position, operation.to
-            )
-
-            # Convert LSP workspace edit to file buffers
-            buffers: dict[Path, str] = {}
-            for uri, edits in workspace_edit.changes.items():
-                edit_path = self._uri_to_path(uri)
-                if not edit_path.exists():
-                    logger.warning("Edit target path does not exist: %s", edit_path)
-                    continue
-                content = edit_path.read_text(encoding="utf-8")
-                # Apply edits in reverse order to preserve positions
-                for edit in reversed(edits):
-                    content = self._apply_text_edit(content, edit)
-                buffers[edit_path] = content
-
-            await self._close_lsp_client()
-            return buffers
-
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    return pool.submit(asyncio.run, _do_lsp_rename()).result()
-            else:
-                return loop.run_until_complete(_do_lsp_rename())
-        except RuntimeError:
-            return asyncio.run(_do_lsp_rename())
-
-    def _uri_to_path(self, uri: str) -> Path:
-        """Convert a file URI back to a Path."""
-        if uri.startswith("file:///"):
-            return Path(uri[8:] if not uri.startswith("file:///") else uri[7:])
-        elif uri.startswith("file://"):
-            return Path(uri[7:])
-        elif uri.startswith("file:"):
-            return Path(uri[5:])
-        return Path(uri)
-
-    def _apply_text_edit(self, content: str, edit) -> str:
-        """Apply a single LSP text edit to file content."""
-        lines = content.split("\n")
-        start_line = edit.range.start.line
-        start_col = edit.range.start.character
-        end_line = edit.range.end.line
-        end_col = edit.range.end.character
-
-        # Preserve text before the edit
-        prefix = lines[start_line][:start_col] if start_line < len(lines) else ""
-
-        # Preserve text after the edit
-        suffix = lines[end_line][end_col:] if end_line < len(lines) else ""
-
-        # Build new content
-        new_content = prefix + edit.new_text + suffix
-
-        # Reconstruct full file
-        before = "\n".join(lines[:start_line])
-        after = "\n".join(lines[end_line + 1 :]) if end_line + 1 < len(lines) else ""
-
-        if before and after:
-            return before + "\n" + new_content + "\n" + after
-        elif before:
-            return before + "\n" + new_content
-        elif after:
-            return new_content + "\n" + after
-        else:
-            return new_content
-
-    def _apply_in_memory(
-        self, graph: SemanticGraph, operation: Operation
-    ) -> dict[Path, str]:
-        """Apply non-rename operations in-memory (add/remove field)."""
-        file_buffers: dict[Path, str] = {}
-
+    def _compute_affected_files(self, graph: SemanticGraph, operation: Operation) -> list[str]:
+        if isinstance(operation, RenameFieldOp):
+            return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
         if isinstance(operation, AddFieldOp):
-            file_buffers = self._apply_add_field(graph, operation)
-        elif isinstance(operation, RemoveFieldOp):
-            file_buffers = self._apply_remove_field(graph, operation)
+            symbol = graph.resolve_class(operation.class_name)
+            return [symbol.file_path] if symbol else []
+        if isinstance(operation, RemoveFieldOp):
+            return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
+        return []
 
-        return file_buffers
+    def _project_file_path(self, file_path: str) -> Path:
+        path = Path(file_path)
+        if path.is_absolute():
+            return path.resolve()
+        return (self.project_path / path).resolve()
 
-    def _apply_add_field(
-        self, graph: SemanticGraph, operation: AddFieldOp
-    ) -> dict[Path, str]:
-        """Add a new field to a class."""
-        buffers: dict[Path, str] = {}
-        symbol = graph.get_symbol(operation.class_name)
-        if symbol is None:
-            raise SymbolNotFoundError(operation.class_name)
+    def _assert_inside_project(self, path: Path) -> None:
+        try:
+            path.resolve().relative_to(self.project_path)
+        except ValueError as exc:
+            raise EngineError(
+                ErrorType.WRITE_ERROR,
+                "Refusing to write outside the project root",
+                file_path=str(path),
+            ) from exc
 
-        fp = Path(symbol.file_path)
-        content = fp.read_text(encoding="utf-8")
+    def _commit(self, patches: list[FilePatch]) -> list[str]:
+        """Write all patches, rolling back if any write fails."""
 
-        lines = content.split("\n")
-        last_brace_idx = -1
-        for i in range(len(lines) - 1, -1, -1):
-            if lines[i].strip() == "}":
-                last_brace_idx = i
-                break
-
-        if last_brace_idx > 0:
-            indent = "    "
-            field_decl = f"\n{indent}private {operation.field_type} {operation.field_name}"
-            if operation.default_value:
-                field_decl += f" = {operation.default_value}"
-            field_decl += ";"
-            lines.insert(last_brace_idx, field_decl)
-            buffers[fp] = "\n".join(lines)
-
-        return buffers
-
-    def _apply_remove_field(
-        self, graph: SemanticGraph, operation: RemoveFieldOp
-    ) -> dict[Path, str]:
-        """Remove a field from a class."""
-        buffers: dict[Path, str] = {}
-        target_id = f"{operation.class_name}.{operation.field_name}"
-        field_symbol = graph.get_symbol(target_id)
-        if field_symbol is None:
-            raise SymbolNotFoundError(target_id)
-
-        fp = Path(field_symbol.file_path)
-        content = fp.read_text(encoding="utf-8")
-
-        if field_symbol.line > 0:
-            lines = content.split("\n")
-            start = field_symbol.line - 1
-            end = start + 1
-            while end < len(lines) and ";" not in lines[end - 1]:
-                end += 1
-            while end < len(lines) and not lines[end].strip():
-                end += 1
-            new_lines = lines[:start] + lines[end:]
-            buffers[fp] = "\n".join(new_lines)
-
-        return buffers
-
-    def _reparse_files(
-        self, file_buffers: dict[Path, str], old_graph: SemanticGraph
-    ) -> SemanticGraph:
-        """Re-parse modified files and rebuild the graph.
-
-        V1 strategy: full rebuild for correctness.
-        """
-        classes = parse_java_project(self.project_path)
-        builder = GraphBuilder()
-        return builder.build(classes)
-
-    def _commit(self, file_buffers: dict[Path, str]) -> list[str]:
-        """Write all file buffers to disk atomically."""
-        modified_files = []
-        backups: dict[Path, str] = {}
+        backups = {patch.path: patch.original for patch in patches}
+        modified: list[str] = []
 
         try:
-            for fp in file_buffers:
-                backups[fp] = fp.read_text(encoding="utf-8")
-
-            for fp, content in file_buffers.items():
-                fp.write_text(content, encoding="utf-8")
-                modified_files.append(str(fp))
-
-            return modified_files
-
-        except Exception as e:
-            logger.error("Write failed, rolling back: %s", e)
-            for fp, original in backups.items():
+            for patch in patches:
+                self._assert_inside_project(patch.path)
+                patch.path.write_text(patch.modified, encoding="utf-8")
+                modified.append(str(patch.path.relative_to(self.project_path)))
+            return modified
+        except Exception as exc:
+            for path, original in backups.items():
                 try:
-                    fp.write_text(original, encoding="utf-8")
-                except Exception as rb_err:
-                    logger.error("Rollback failed for %s: %s", fp, rb_err)
-            raise EngineError(
-                error_type=EngineError.error_type if hasattr(EngineError, "WRITE_ERROR") else "write_error",
-                message=f"Write failed, rolled back: {e}",
-            ) from e
+                    path.write_text(original, encoding="utf-8")
+                except Exception as rollback_exc:
+                    logger.error("Rollback failed for %s: %s", path, rollback_exc)
+            if isinstance(exc, EngineError):
+                raise
+            raise EngineError(ErrorType.WRITE_ERROR, f"Write failed and was rolled back: {exc}")
+
+
+def apply_lsp_edits(content: str, edits: list[LspTextEdit]) -> str:
+    """Apply LSP edits to content.
+
+    Edits are applied from the end of the file to the beginning so ranges remain
+    valid.  Offsets are computed against UTF-16 code units as specified by LSP.
+    For ASCII/typical Java source this is identical to Python character offsets;
+    the helper still handles non-ASCII by measuring UTF-16 units.
+    """
+
+    line_offsets = _line_offsets(content)
+
+    def offset_for(position: LspPosition) -> int:
+        if position.line >= len(line_offsets):
+            return len(content)
+        line_start = line_offsets[position.line]
+        line_end = line_offsets[position.line + 1] if position.line + 1 < len(line_offsets) else len(content)
+        line_text = content[line_start:line_end]
+        return line_start + _utf16_index_to_py_index(line_text, position.character)
+
+    ordered = sorted(
+        edits,
+        key=lambda edit: (
+            offset_for(edit.range.start),
+            offset_for(edit.range.end),
+        ),
+        reverse=True,
+    )
+
+    result = content
+    for edit in ordered:
+        start = offset_for(edit.range.start)
+        end = offset_for(edit.range.end)
+        result = result[:start] + edit.new_text + result[end:]
+    return result
+
+
+def _line_offsets(content: str) -> list[int]:
+    offsets = [0]
+    for index, char in enumerate(content):
+        if char == "\n":
+            offsets.append(index + 1)
+    return offsets
+
+
+def _utf16_index_to_py_index(text: str, utf16_index: int) -> int:
+    units = 0
+    for index, char in enumerate(text):
+        if units >= utf16_index:
+            return index
+        units += len(char.encode("utf-16-le")) // 2
+    return len(text)
+
+
+def _normalize_newlines(modified: str, original: str) -> str:
+    """Normalize mixed newlines introduced by LSP edits."""
+
+    preferred = "\r\n" if "\r\n" in original else "\n"
+    return modified.replace("\r\n", "\n").replace("\r", "\n").replace("\n", preferred)
+
+
+def _run_async(coro: object) -> Any:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # type: ignore[arg-type]
+
+    if loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return loop.run_until_complete(coro)
+
+
+def _operation_target(operation: Operation) -> str | None:
+    return getattr(operation, "target", None)

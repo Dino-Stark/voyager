@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from rich.console import Console
@@ -30,18 +29,12 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
         ApplyResult dict or None on failure.
     """
     project_path = _find_project_root()
-    plan_file = project_path / ".voyager" / "pending_plan.json"
+    storage = StorageManager(project_path)
+    data = storage.load_pending_plan()
 
-    if not plan_file.exists():
+    if data is None:
         console.print("[red]No pending plan found.[/red]")
         console.print("Run [bold]voyager plan[/bold] first.")
-        return None
-
-    # Load pending plan
-    try:
-        data = json.loads(plan_file.read_text(encoding="utf-8"))
-    except Exception as e:
-        console.print(f"[red]Failed to load plan: {e}[/red]")
         return None
 
     operation = _deserialize_operation(data)
@@ -54,7 +47,6 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
             return None
 
     # Execute
-    storage = StorageManager(project_path)
     engine = ExecutionEngine(project_path, storage)
     result = engine.apply(operation)
 
@@ -64,8 +56,7 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
         for fp in result.modified_files:
             console.print(f"  Modified: {fp}")
 
-        # Clean up pending plan
-        plan_file.unlink(missing_ok=True)
+        storage.clear_pending_plan()
     else:
         console.print("[red]Operation failed.[/red]")
         for err in result.errors:

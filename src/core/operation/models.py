@@ -39,6 +39,12 @@ class RenameFieldOp(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_new_name(self) -> RenameFieldOp:
+        if not self.to.isidentifier():
+            raise ValueError(f"New field name must be a valid identifier, got: '{self.to}'")
+        return self
+
     @property
     def class_name(self) -> str:
         return self.target.split(".", 1)[0]

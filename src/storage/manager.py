@@ -22,6 +22,7 @@ GRAPH_FILE = "graph.json"
 OPERATIONS_LOG = "operations.log"
 RULES_FILE = "rules.yaml"
 CACHE_DIR = "cache"
+PENDING_PLAN_FILE = "pending_plan.json"
 
 
 class StorageManager:
@@ -70,6 +71,27 @@ class StorageManager:
     def load_rules_path(self) -> Path:
         """Return the path to the rules file (may not exist)."""
         return self.voyager_dir / RULES_FILE
+
+    def load_pending_plan(self) -> dict | None:
+        """Load the pending operation plan, if present."""
+        plan_path = self.voyager_dir / PENDING_PLAN_FILE
+        if not plan_path.exists():
+            return None
+        return json.loads(plan_path.read_text(encoding="utf-8"))
+
+    def save_pending_plan(self, operation) -> Path:
+        """Persist an operation plan for a later apply step."""
+        plan_path = self.voyager_dir / PENDING_PLAN_FILE
+        data = operation.model_dump(mode="json") if hasattr(operation, "model_dump") else operation
+        plan_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return plan_path
+
+    def clear_pending_plan(self) -> None:
+        """Remove the pending plan file."""
+        (self.voyager_dir / PENDING_PLAN_FILE).unlink(missing_ok=True)
 
     def log_operation(self, operation, modified_files: list[str]) -> None:
         """Append an operation to the operations log."""

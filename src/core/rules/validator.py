@@ -1,8 +1,4 @@
-"""Rule validator.
-
-Validates operations against predefined rules before and after execution.
-Responsibilities: detect errors + block execution. Does NOT auto-fix.
-"""
+"""Rule validation for semantic operations."""
 
 from __future__ import annotations
 
@@ -13,13 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from core.graph.semantic_graph import SemanticGraph, Symbol, SymbolType
-from core.operation.models import (
-    AddFieldOp,
-    Operation,
-    RemoveFieldOp,
-    RenameFieldOp,
-)
+from core.graph.semantic_graph import RefType, SemanticGraph, SymbolType
+from core.operation.models import AddFieldOp, Operation, RemoveFieldOp, RenameFieldOp
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +20,8 @@ class RuleAction(str, Enum):
     WARN = "warn"
 
 
-@dataclass
-class RuleViolation:
-    """A single rule violation."""
-
-    rule_id: str
-    action: RuleAction
-    message: str
-    target: str | None = None
-
-
-@dataclass
+@dataclass(frozen=True)
 class RuleDef:
-    """Definition of a validation rule."""
-
     id: str
     type: str
     target: str | None = None
@@ -50,7 +29,7 @@ class RuleDef:
 
 
 class RuleValidator:
-    """Validates operations against project rules."""
+    """Validate operations and graph-level invariants."""
 
     def __init__(self, rules_path: Path | None = None) -> None:
         self.rules: list[RuleDef] = []
@@ -58,182 +37,207 @@ class RuleValidator:
             self._load_rules(rules_path)
 
     def _load_rules(self, rules_path: Path) -> None:
-        """Load rules from a YAML file."""
         try:
-            with open(rules_path, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            for r in data.get("rules", []):
+            data = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+            for raw in data.get("rules", []):
                 self.rules.append(
                     RuleDef(
-                        id=r["id"],
-                        type=r["type"],
-                        target=r.get("target"),
-                        action=RuleAction(r.get("action", "error")),
+                        id=raw["id"],
+                        type=raw["type"],
+                        target=raw.get("target"),
+                        action=RuleAction(raw.get("action", "error")),
                     )
                 )
-            logger.info("Loaded %d rules from %s", len(self.rules), rules_path)
-        except Exception as e:
-            logger.warning("Failed to load rules from %s: %s", rules_path, e)
+        except Exception as exc:
+            logger.warning("Failed to load rules from %s: %s", rules_path, exc)
 
     def validate_pre(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
-        """Pre-execution validation.
-
-        Checks that the operation targets valid symbols and doesn't violate rules.
-
-        Returns:
-            List of violation dicts. Empty means all clear.
-        """
         violations: list[dict] = []
 
-        # Universal: check target symbol exists
         if isinstance(operation, RenameFieldOp):
-            sym = graph.get_field_symbol(operation.class_name, operation.field_name)
-            if sym is None:
-                violations.append({
-                    "type": "symbol_not_found",
-                    "message": f"Field '{operation.target}' not found in graph",
-                    "target": operation.target,
-                    "action": "error",
-                })
-            else:
-                # Check new name doesn't already exist
-                existing = graph.get_field_symbol(operation.class_name, operation.to)
-                if existing:
-                    violations.append({
-                        "type": "symbol_already_exists",
-                        "message": f"Field '{operation.class_name}.{operation.to}' already exists",
-                        "target": f"{operation.class_name}.{operation.to}",
-                        "action": "error",
-                    })
+            field = graph.resolve_field(operation.class_name, operation.field_name)
+            if field is None:
+                violations.append(
+                    _violation(
+                        "symbol_not_found",
+                        f"Field '{operation.target}' was not found",
+                        operation.target,
+                    )
+                )
+            elif graph.resolve_field(operation.class_name, operation.to) is not None:
+                violations.append(
+                    _violation(
+                        "symbol_already_exists",
+                        f"Field '{operation.class_name}.{operation.to}' already exists",
+                        f"{operation.class_name}.{operation.to}",
+                    )
+                )
 
         elif isinstance(operation, AddFieldOp):
-            sym = graph.get_symbol(operation.class_name)
-            if sym is None:
-                violations.append({
-                    "type": "symbol_not_found",
-                    "message": f"Class '{operation.class_name}' not found",
-                    "target": operation.class_name,
-                    "action": "error",
-                })
-            else:
-                existing = graph.get_field_symbol(operation.class_name, operation.field_name)
-                if existing:
-                    violations.append({
-                        "type": "symbol_already_exists",
-                        "message": f"Field '{operation.class_name}.{operation.field_name}' already exists",
-                        "target": f"{operation.class_name}.{operation.field_name}",
-                        "action": "error",
-                    })
+            if graph.resolve_class(operation.class_name) is None:
+                violations.append(
+                    _violation(
+                        "symbol_not_found",
+                        f"Class '{operation.class_name}' was not found",
+                        operation.class_name,
+                    )
+                )
+            elif graph.resolve_field(operation.class_name, operation.field_name) is not None:
+                violations.append(
+                    _violation(
+                        "symbol_already_exists",
+                        f"Field '{operation.class_name}.{operation.field_name}' already exists",
+                        f"{operation.class_name}.{operation.field_name}",
+                    )
+                )
 
         elif isinstance(operation, RemoveFieldOp):
-            sym = graph.get_field_symbol(operation.class_name, operation.field_name)
-            if sym is None:
-                violations.append({
-                    "type": "symbol_not_found",
-                    "message": f"Field '{operation.class_name}.{operation.field_name}' not found",
-                    "target": f"{operation.class_name}.{operation.field_name}",
-                    "action": "error",
-                })
+            if graph.resolve_field(operation.class_name, operation.field_name) is None:
+                violations.append(
+                    _violation(
+                        "symbol_not_found",
+                        f"Field '{operation.class_name}.{operation.field_name}' was not found",
+                        f"{operation.class_name}.{operation.field_name}",
+                    )
+                )
 
-        # Run custom rules
-        violations.extend(self._check_custom_rules(graph, operation))
-
+        violations.extend(self._check_custom_rules(graph))
         return violations
 
     def validate_post(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
-        """Post-execution validation on the new graph.
+        violations = self._check_duplicate_definitions(graph)
 
-        Verifies the graph is still consistent after the operation.
-        """
-        violations: list[dict] = []
-
-        # Check for duplicate definitions
-        violations.extend(self._check_duplicate_definitions(graph))
-
-        # Verify the operation result
         if isinstance(operation, RenameFieldOp):
-            new_field = graph.get_field_symbol(operation.class_name, operation.to)
-            if new_field is None:
-                violations.append({
-                    "type": "validation_failed",
-                    "message": f"Rename failed: field '{operation.class_name}.{operation.to}' not found after apply",
-                    "target": operation.target,
-                    "action": "error",
-                })
-            old_field = graph.get_field_symbol(operation.class_name, operation.field_name)
+            class_symbol = graph.resolve_class(operation.class_name)
+            old_target_id = (
+                f"{class_symbol.id}.{operation.field_name}" if class_symbol is not None else None
+            )
+            old_field = graph.resolve_field(operation.class_name, operation.field_name)
+            if graph.resolve_field(operation.class_name, operation.to) is None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: '{operation.class_name}.{operation.to}' not found after apply",
+                        operation.target,
+                    )
+                )
             if old_field is not None:
-                violations.append({
-                    "type": "validation_failed",
-                    "message": f"Rename failed: old field '{operation.target}' still exists after apply",
-                    "target": operation.target,
-                    "action": "error",
-                })
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: old field '{operation.target}' still exists after apply",
+                        operation.target,
+                    )
+                )
+            unresolved_old_refs = [
+                ref
+                for ref in graph.references
+                if ref.ref_type == RefType.FIELD_ACCESS
+                and old_target_id is not None
+                and ref.to_symbol == old_target_id
+            ]
+            if unresolved_old_refs:
+                locations = sorted({f"{ref.file_path}:{ref.line}" for ref in unresolved_old_refs})
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename left references to old field '{operation.field_name}': {locations}",
+                        operation.target,
+                    )
+                )
 
+        violations.extend(self._check_custom_rules(graph))
         return violations
 
-    def _check_custom_rules(
-        self, graph: SemanticGraph, operation: Operation
-    ) -> list[dict]:
-        """Check user-defined rules from rules.yaml."""
+    def _check_custom_rules(self, graph: SemanticGraph) -> list[dict]:
         violations: list[dict] = []
-
         for rule in self.rules:
-            if rule.type == "symbol_uniqueness" and rule.target and rule.target.upper() == "DTO":
+            if rule.type == "symbol_uniqueness" and (rule.target or "").upper() == "DTO":
                 violations.extend(self._check_dto_uniqueness(graph, rule))
-
         return violations
 
-    def _check_dto_uniqueness(
-        self, graph: SemanticGraph, rule: RuleDef
-    ) -> list[dict]:
-        """Check for duplicate DTO definitions.
-
-        Rules:
-        - same_name + different_structure -> error
-        - different_name + same_structure -> warn
-        """
+    def _check_dto_uniqueness(self, graph: SemanticGraph, rule: RuleDef) -> list[dict]:
         violations: list[dict] = []
-        classes = [s for s in graph.symbols if s.type == SymbolType.CLASS]
+        class_symbols = [
+            symbol
+            for symbol in graph.symbols_by_type(SymbolType.CLASS)
+            if symbol.extra.get("is_dto", False)
+        ]
 
-        for i, cls_a in enumerate(classes):
-            for cls_b in classes[i + 1:]:
-                if cls_a.name == cls_b.name and cls_a.file_path != cls_b.file_path:
-                    # Same name in different files - check structure
-                    fields_a = set(
-                        s.name for s in graph.symbols
-                        if s.parent_id == cls_a.name and s.type == SymbolType.FIELD
+        by_name: dict[str, list] = {}
+        by_shape: dict[tuple[str, ...], list] = {}
+        for cls in class_symbols:
+            by_name.setdefault(cls.name, []).append(cls)
+            fields = tuple(
+                sorted(
+                    symbol.name
+                    for symbol in graph.symbols_by_type(SymbolType.FIELD)
+                    if symbol.parent_id == cls.id
+                )
+            )
+            by_shape.setdefault(fields, []).append(cls)
+
+        for name, symbols in by_name.items():
+            if len(symbols) <= 1:
+                continue
+            shapes = {
+                tuple(
+                    sorted(
+                        field.name
+                        for field in graph.symbols_by_type(SymbolType.FIELD)
+                        if field.parent_id == symbol.id
                     )
-                    fields_b = set(
-                        s.name for s in graph.symbols
-                        if s.parent_id == cls_b.name and s.type == SymbolType.FIELD
+                )
+                for symbol in symbols
+            }
+            if len(shapes) > 1:
+                violations.append(
+                    _violation(
+                        rule.id,
+                        f"DTO '{name}' is defined with different field sets",
+                        name,
+                        action=rule.action.value,
                     )
-                    if fields_a != fields_b:
-                        violations.append({
-                            "type": rule.id,
-                            "message": (
-                                f"Duplicate DTO '{cls_a.name}' with different structure "
-                                f"in {cls_a.file_path} vs {cls_b.file_path}"
-                            ),
-                            "action": rule.action.value,
-                        })
+                )
+
+        for shape, symbols in by_shape.items():
+            names = {symbol.name for symbol in symbols}
+            if shape and len(names) > 1:
+                violations.append(
+                    _violation(
+                        rule.id,
+                        f"DTOs share the same structure: {sorted(names)}",
+                        ",".join(sorted(names)),
+                        action=RuleAction.WARN.value,
+                    )
+                )
 
         return violations
 
     def _check_duplicate_definitions(self, graph: SemanticGraph) -> list[dict]:
-        """Post-apply check for structural consistency."""
         violations: list[dict] = []
-        classes = [s for s in graph.symbols if s.type == SymbolType.CLASS]
-        seen_names: dict[str, list[str]] = {}
-
-        for cls in classes:
-            seen_names.setdefault(cls.name, []).append(cls.file_path)
-
-        for name, files in seen_names.items():
-            if len(files) > 1:
-                violations.append({
-                    "type": "duplicate_definition",
-                    "message": f"Class '{name}' defined in multiple files: {files}",
-                    "action": "error",
-                })
-
+        seen: dict[str, list[str]] = {}
+        for symbol in graph.symbols_by_type(SymbolType.CLASS):
+            seen.setdefault(symbol.id, []).append(symbol.file_path)
+        for symbol_id, files in seen.items():
+            if len(set(files)) > 1:
+                violations.append(
+                    _violation(
+                        "duplicate_definition",
+                        f"Class '{symbol_id}' is defined in multiple files: {files}",
+                        symbol_id,
+                    )
+                )
         return violations
+
+
+def _violation(
+    kind: str,
+    message: str,
+    target: str | None = None,
+    action: str = RuleAction.ERROR.value,
+) -> dict:
+    result = {"type": kind, "message": message, "action": action}
+    if target:
+        result["target"] = target
+    return result

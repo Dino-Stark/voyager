@@ -16,6 +16,8 @@ class ErrorType(str, Enum):
     RULE_VIOLATION = "rule_violation"
     PARSE_ERROR = "parse_error"
     WRITE_ERROR = "write_error"
+    LSP_UNAVAILABLE = "lsp_unavailable"
+    UNSUPPORTED_OPERATION = "unsupported_operation"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -89,6 +91,28 @@ class ValidationError(EngineError):
     def __init__(self, message: str, target: str | None = None) -> None:
         super().__init__(
             ErrorType.VALIDATION_FAILED,
+            message,
+            target=target,
+        )
+
+
+class LspUnavailableError(EngineError):
+    """Raised when a semantic operation requires LSP but no server is available."""
+
+    def __init__(self, message: str, target: str | None = None) -> None:
+        super().__init__(
+            ErrorType.LSP_UNAVAILABLE,
+            message,
+            target=target,
+        )
+
+
+class UnsupportedOperationError(EngineError):
+    """Raised when an operation exists in the model but is not supported in V1."""
+
+    def __init__(self, message: str, target: str | None = None) -> None:
+        super().__init__(
+            ErrorType.UNSUPPORTED_OPERATION,
             message,
             target=target,
         )

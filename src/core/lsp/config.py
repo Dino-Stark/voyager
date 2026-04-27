@@ -6,7 +6,9 @@ New languages can be added here with their server command and init params.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -34,8 +36,22 @@ class LanguageConfig:
 
     def find_server_command(self) -> list[str] | None:
         """Check if the LSP server binary is available on PATH."""
-        if shutil.which(self.command[0]):
-            return self.command
+        executable = self.command[0]
+        rest = self.command[1:]
+
+        if os.name == "nt" and Path(executable).suffix == "":
+            for suffix in (".cmd", ".bat", ".exe"):
+                resolved = shutil.which(executable + suffix)
+                if resolved:
+                    if suffix in {".cmd", ".bat"}:
+                        return ["cmd.exe", "/c", resolved, *rest]
+                    return [resolved, *rest]
+
+        resolved = shutil.which(executable)
+        if resolved:
+            if os.name == "nt" and Path(resolved).suffix == "":
+                return [sys.executable, resolved, *rest]
+            return [resolved, *rest]
         return None
 
 
@@ -106,7 +122,7 @@ def get_language_config(language: Language) -> LanguageConfig:
     if language not in configs:
         raise NotImplementedError(
             f"Language '{language.value}' is not yet supported. "
-            f"Supported languages: {[l.value for l in Language]}"
+            f"Supported languages: {[item.value for item in Language]}"
         )
     return configs[language]
 
