@@ -14,6 +14,9 @@ src/core/engine/execution_engine.py
 src/core/graph/__init__.py
 src/core/graph/builder.py
 src/core/graph/semantic_graph.py
+src/core/lsp/__init__.py
+src/core/lsp/client.py
+src/core/lsp/config.py
 src/core/operation/__init__.py
 src/core/operation/models.py
 src/core/parser/__init__.py
@@ -31,3 +34,4 @@ src/voyager.egg-info/requires.txt
 src/voyager.egg-info/top_level.txt
 src/voyager_cmd/__init__.py
 src/voyager_cmd/main.py
+tests/test_static_v1.py
