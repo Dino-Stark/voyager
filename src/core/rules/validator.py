@@ -16,12 +16,33 @@ logger = logging.getLogger(__name__)
 
 
 class RuleAction(str, Enum):
-    ERROR = "error"
-    WARN = "warn"
+    """
+    Severity level for a rule violation.
+    """
 
 
 @dataclass(frozen=True)
 class RuleDef:
+    """
+    A rule loaded from ``rules.yaml``.
+
+    Attributes:
+        id: Unique rule identifier used in violation reports.
+        type: Rule type, e.g. ``"symbol_uniqueness"``.
+        target: Optional scope filter, e.g. ``"DTO"``.
+        action: ``"error"`` (blocks execution) or ``"warn"`` (logs only).
+    """
+
+
+class RuleValidator:
+    """
+    Validate operations and graph-level invariants.
+
+    Runs pre- and post-condition checks before and after every apply.  Rules are
+    loaded from ``.voyager/rules.yaml``; built-in checks include symbol existence,
+    name conflicts, and DTO uniqueness.
+    """
+
     id: str
     type: str
     target: str | None = None
@@ -29,7 +50,13 @@ class RuleDef:
 
 
 class RuleValidator:
-    """Validate operations and graph-level invariants."""
+    """
+    Validate operations and graph-level invariants.
+
+    Runs pre- and post-condition checks before and after every apply.  Rules are
+    loaded from ``.voyager/rules.yaml``; built-in checks include symbol existence,
+    name conflicts, and DTO uniqueness.
+    """
 
     def __init__(self, rules_path: Path | None = None) -> None:
         self.rules: list[RuleDef] = []

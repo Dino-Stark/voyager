@@ -9,12 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 
 class SymbolType(str, Enum):
+    """
+    Kinds of symbols tracked in the semantic graph.
+    """
+
     CLASS = "class"
     FIELD = "field"
     METHOD = "method"
 
 
 class RefType(str, Enum):
+    """
+    Kinds of references between symbols in the semantic graph.
+    """
+
     TYPE_REF = "type_ref"
     PARAM_REF = "param_ref"
     RETURN_REF = "return_ref"
@@ -22,7 +30,22 @@ class RefType(str, Enum):
 
 
 class Symbol(BaseModel):
-    """A semantic symbol known to Voyager."""
+    """
+    A semantic symbol known to Voyager.
+
+    Symbols are the nodes of the semantic graph.  Each one corresponds to a
+    Java class, field, or method extracted from the source.
+
+    Attributes:
+        id: Stable symbol identifier, e.g. ``"com.example.OrderDTO.userId"``.
+        type: One of ``CLASS``, ``FIELD``, or ``METHOD``.
+        name: Short name as declared in source.
+        file_path: File path relative to the project root (or absolute if outside).
+        line: 1-based source line of the declaration.
+        column: 1-based source column of the declaration.
+        parent_id: ID of the enclosing symbol (e.g. containing class for a field).
+        extra: Arbitrary additional facts (type name, modifiers, etc.).
+    """
 
     id: str = Field(description="Stable id, e.g. com.example.OrderDTO.userId")
     type: SymbolType
@@ -35,7 +58,22 @@ class Symbol(BaseModel):
 
 
 class Reference(BaseModel):
-    """A typed relation between symbols."""
+    """
+    A typed relation between two symbols.
+
+    References are the edges of the semantic graph.  Each one records a usage
+    of one symbol inside another (e.g. a field of type ``Order`` creates a
+    ``TYPE_REF`` from the containing class to ``Order``).
+
+    Attributes:
+        from_symbol: ID of the symbol that contains the reference.
+        to_symbol: ID of the symbol being referenced.
+        ref_type: Kind of reference (TYPE_REF, PARAM_REF, RETURN_REF, FIELD_ACCESS).
+        file_path: File where the reference appears.
+        line: 1-based source line of the reference.
+        column: 1-based source column of the reference.
+        extra: Arbitrary additional facts about the reference.
+    """
 
     from_symbol: str
     to_symbol: str
@@ -47,10 +85,17 @@ class Reference(BaseModel):
 
 
 class SemanticGraph(BaseModel):
-    """Minimal V1 code graph.
+    """
+    Minimal V1 code graph.
 
-    The graph is the weak PSI layer described in the design docs: it turns LSP
+    The graph is the the "weak PSI layer" described in the design docs: it turns LSP
     coordinates and parser facts into stable objects that operations can target.
+    It provides in-memory lookup indexes for fast symbol and reference resolution.
+
+    Attributes:
+        project_path: Root path of the scanned project.
+        symbols: All symbols (classes, fields, methods) discovered during scan.
+        references: All typed references between symbols.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -66,8 +111,9 @@ class SemanticGraph(BaseModel):
         self.build_index()
 
     def build_index(self) -> None:
-        """Build in-memory lookup indexes."""
-
+        """
+        Build in-memory lookup indexes.
+        """
         self._symbol_index = {symbol.id: symbol for symbol in self.symbols}
         simple_index: dict[tuple[SymbolType, str], list[Symbol]] = {}
         for symbol in self.symbols:
@@ -78,8 +124,9 @@ class SemanticGraph(BaseModel):
         return self._symbol_index.get(symbol_id)
 
     def resolve_class(self, class_name: str) -> Symbol | None:
-        """Resolve a class by FQN or unambiguous simple name."""
-
+        """
+        Resolve a class by FQN or unambiguous simple name.
+        """
         symbol = self.get_symbol(class_name)
         if symbol and symbol.type == SymbolType.CLASS:
             return symbol
@@ -87,8 +134,9 @@ class SemanticGraph(BaseModel):
         return matches[0] if len(matches) == 1 else None
 
     def resolve_field(self, class_name: str, field_name: str) -> Symbol | None:
-        """Resolve a field by class FQN/simple name and field name."""
-
+        """
+        Resolve a field by class FQN/simple name and field name.
+        """
         class_symbol = self.resolve_class(class_name)
         if class_symbol is None:
             return None
@@ -104,8 +152,9 @@ class SemanticGraph(BaseModel):
         return [ref for ref in self.references if ref.from_symbol == symbol_id]
 
     def get_affected_files_for_field(self, class_name: str, field_name: str) -> list[str]:
-        """Return files affected by a field operation."""
-
+        """
+        Return files affected by a field operation.
+        """
         field = self.resolve_field(class_name, field_name)
         if field is None:
             return []

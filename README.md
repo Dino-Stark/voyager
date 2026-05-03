@@ -38,3 +38,12 @@ voyager apply
 - 仅支持明确类型引用
 - 不支持反射/动态代理
 - 不支持 Lombok / Spring 自动注入分析
+
+## 参考文档
+
+- [LSP 3.18 Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/) — Language Server Protocol 官方协议定义
+- [LSP Specification (main)](https://microsoft.github.io/language-server-protocol/) — 稳定版规范入口
+- [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) — Voyager V1 使用的 Java 语言服务器
+- [LSP documentSymbol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_documentSymbol) — 项目解析使用的 LSP 方法
+- [LSP textDocument/rename](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_rename) — 字段重命名使用的 LSP 方法
+- `designs/V1/LSP Architecture.md` — 项目内 LSP 架构详解文档

@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 class GraphBuilder:
-    """Build a minimal symbol/reference graph for Java POJO projects."""
+    """
+    Build a minimal symbol/reference graph for Java POJO projects.
+    """
 
     def __init__(self, project_path: Path | None = None) -> None:
         self.project_path = project_path.resolve() if project_path else None
@@ -22,8 +24,9 @@ class GraphBuilder:
         self._fqn_by_simple: dict[str, list[str]] = {}
 
     def build(self, classes: list[JavaClass]) -> SemanticGraph:
-        """Build a complete graph from parsed Java classes."""
-
+        """
+        Build a complete graph from parsed Java classes.
+        """
         self._graph = SemanticGraph(project_path=str(self.project_path or ""))
         self._classes_by_fqn = {}
         self._fqn_by_simple = {}
@@ -148,13 +151,13 @@ class GraphBuilder:
                     )
 
     def _extract_field_access_references(self, cls: JavaClass) -> None:
-        """Extract simple typed field access references.
+        """
+        Extract simple typed field access references.
 
         This is intentionally conservative.  It only records ``var.field`` when
         ``var`` has an explicit type in the same file and that type is a known
         class.  Ambiguous cases are ignored.
         """
-
         try:
             text = cls.file_path.read_text(encoding="utf-8")
         except OSError:

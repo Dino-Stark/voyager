@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class OperationType(str, Enum):
+    """
+    All operation types understood by Voyager.
+
+    Each value corresponds to a structured modification that Voyager can plan and apply.
+    Only ``rename_field`` is fully implemented in V1.
+    """
+
     ADD_FIELD = "add_field"
     REMOVE_FIELD = "remove_field"
     RENAME_FIELD = "rename_field"
@@ -22,7 +29,17 @@ class OperationType(str, Enum):
 
 
 class RenameFieldOp(BaseModel):
-    """Rename a field in a DTO class."""
+    """
+    Rename a field in a DTO class.
+
+    The operation is atomically applied across all files using LSP rename, then
+    re-validated before committing to disk.
+
+    Attributes:
+        op: Fixed to ``OperationType.RENAME_FIELD``.
+        target: Fully qualified field spec in ``ClassName.fieldName`` format.
+        to: New field name (must be a valid Java identifier).
+    """
 
     op: Literal[OperationType.RENAME_FIELD] = OperationType.RENAME_FIELD
     target: str = Field(
@@ -54,12 +71,26 @@ class RenameFieldOp(BaseModel):
         return self.target.split(".", 1)[1]
 
     def reverse(self) -> RenameFieldOp:
-        """Return the inverse operation for rollback."""
+        """
+        Return the inverse operation for rollback.
+        """
         return RenameFieldOp(target=f"{self.class_name}.{self.to}", to=self.field_name)
 
 
 class AddFieldOp(BaseModel):
-    """Add a new field to a DTO class."""
+    """
+    Add a new field to a DTO class.
+
+    V1: declared but not implemented in the execution engine.
+    The ``reverse()`` method loses type information.
+
+    Attributes:
+        op: Fixed to ``OperationType.ADD_FIELD``.
+        target: Target class name.
+        field_name: Name of the new field.
+        field_type: Java type (default ``"String"``).
+        default_value: Optional default value expression.
+    """
 
     op: Literal[OperationType.ADD_FIELD] = OperationType.ADD_FIELD
     target: str = Field(description="Target class name")
@@ -72,12 +103,23 @@ class AddFieldOp(BaseModel):
         return self.target
 
     def reverse(self) -> RemoveFieldOp:
-        """Return the inverse operation for rollback."""
+        """
+        Return the inverse operation for rollback.
+        """
         return RemoveFieldOp(target=self.target, field_name=self.field_name)
 
 
 class RemoveFieldOp(BaseModel):
-    """Remove a field from a DTO class."""
+    """
+    Remove a field from a DTO class.
+
+    V1: declared but not implemented in the execution engine.
+
+    Attributes:
+        op: Fixed to ``OperationType.REMOVE_FIELD``.
+        target: Target class name.
+        field_name: Name of the field to remove.
+    """
 
     op: Literal[OperationType.REMOVE_FIELD] = OperationType.REMOVE_FIELD
     target: str = Field(description="Target class name")
@@ -88,7 +130,9 @@ class RemoveFieldOp(BaseModel):
         return self.target
 
     def reverse(self) -> AddFieldOp:
-        """Return the inverse operation for rollback (simplified, loses type info)."""
+        """
+        Return the inverse operation for rollback (simplified, loses type info).
+        """
         return AddFieldOp(target=self.target, field_name=self.field_name)
 
 
@@ -97,7 +141,17 @@ Operation = RenameFieldOp | AddFieldOp | RemoveFieldOp
 
 
 class PlanResult(BaseModel):
-    """Result of planning an operation."""
+    """
+    Outcome of the plan phase.
+
+    Describes whether an operation is safe to apply and which files it would affect.
+
+    Attributes:
+        operation: The operation that was planned.
+        affected_files: List of files that would be modified if applied.
+        violations: Rule violations that blocked the plan (empty if valid).
+        is_valid: ``True`` if the plan passed all pre-condition checks.
+    """
 
     operation: Operation
     affected_files: list[str]
@@ -106,7 +160,17 @@ class PlanResult(BaseModel):
 
 
 class ApplyResult(BaseModel):
-    """Result of applying an operation."""
+    """
+    Outcome of the apply phase.
+
+    Describes whether the operation succeeded and which files were modified.
+
+    Attributes:
+        success: ``True`` if the operation committed all changes successfully.
+        operation: The operation that was (or was not) applied.
+        modified_files: Files that were written to disk.
+        errors: Structured error details for each failure.
+    """
 
     success: bool
     operation: Operation

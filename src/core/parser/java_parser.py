@@ -26,7 +26,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class JavaField:
-    """A Java field or parameter declaration."""
+    """
+    A Java field or constructor parameter declaration.
+
+    Represents a single member variable or a method parameter.  Source positions
+    (``line``, ``column``) are 1-based, matching the original file.
+
+    Attributes:
+        name: Field or parameter name.
+        type_name: Fully qualified or simple type name as written in source.
+        modifiers: Java modifiers, e.g. ``["private", "final"]``.
+        line: 1-based line number of the declaration in source.
+        column: 1-based column number of the declaration in source.
+    """
 
     name: str
     type_name: str
@@ -37,7 +49,17 @@ class JavaField:
 
 @dataclass
 class JavaMethod:
-    """A Java method declaration."""
+    """
+    A Java method or constructor declaration.
+
+    Attributes:
+        name: Method name.
+        return_type: Return type as written in source, or ``None`` for constructors.
+        parameters: List of formal parameters.
+        modifiers: Java modifiers, e.g. ``["public", "static"]``.
+        line: 1-based line number of the declaration in source.
+        column: 1-based column number of the declaration in source.
+    """
 
     name: str
     return_type: str | None = None
@@ -49,7 +71,23 @@ class JavaMethod:
 
 @dataclass
 class JavaClass:
-    """A Java top-level type."""
+    """
+    A Java top-level type (class, interface, enum, or record).
+
+    A flattened view of a single type produced by either the LSP
+    ``documentSymbol`` mode or the built-in static parser.
+
+    Attributes:
+        name: Simple class name.
+        file_path: Absolute path to the source file.
+        package: Java package, e.g. ``"com.example"``.
+        fields: Declared fields and constructor parameters.
+        methods: Declared methods and constructors.
+        imports: All ``import`` statements in the source file.
+        line: 1-based line number of the type declaration.
+        column: 1-based column number of the type declaration.
+        is_dto: Whether this type looks like a DTO/POJO (heuristic-based).
+    """
 
     name: str
     file_path: Path

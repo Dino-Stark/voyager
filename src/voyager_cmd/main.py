@@ -40,7 +40,9 @@ def _setup_logging(verbose: bool) -> None:
 @click.version_option(version="0.1.0", prog_name="voyager")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:
-    """Voyager - Semantic code modification system."""
+    """
+    Voyager - Semantic code modification system.
+    """
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     _setup_logging(verbose)
@@ -50,7 +52,9 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 @click.argument("project_path", type=click.Path(exists=True, file_okay=False))
 @click.pass_context
 def scan(ctx: click.Context, project_path: str) -> None:
-    """Scan a Java project and build the semantic graph."""
+    """
+    Scan a Java project and build the semantic graph.
+    """
     from pathlib import Path
     result = scan_project(Path(project_path))
     if result:
@@ -66,7 +70,9 @@ def scan(ctx: click.Context, project_path: str) -> None:
 @click.argument("value", required=False)
 @click.pass_context
 def plan(ctx: click.Context, op_type: str, target: str, value: str | None) -> None:
-    """Plan an operation and show affected files."""
+    """
+    Plan an operation and show affected files.
+    """
     result = plan_operation(op_type, target, value)
     if result is None:
         sys.exit(1)
@@ -76,7 +82,9 @@ def plan(ctx: click.Context, op_type: str, target: str, value: str | None) -> No
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
 def apply(ctx: click.Context, yes: bool) -> None:
-    """Apply the last planned operation."""
+    """
+    Apply the last planned operation.
+    """
     result = apply_plan(skip_confirm=yes)
     if result is None:
         sys.exit(1)
@@ -85,7 +93,9 @@ def apply(ctx: click.Context, yes: bool) -> None:
 @cli.command()
 @click.pass_context
 def status(ctx: click.Context) -> None:
-    """Show current project status and graph info."""
+    """
+    Show current project status and graph info.
+    """
     from storage.manager import StorageManager
 
     manager = StorageManager(_find_project_root_for_status())

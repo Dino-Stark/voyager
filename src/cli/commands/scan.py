@@ -16,12 +16,21 @@ console = Console()
 
 @dataclass
 class ScanResult:
+    """
+    Result of a scan operation.
+
+    Attributes:
+        symbols_count: Total number of symbols (classes + fields + methods).
+        references_count: Total number of typed references between symbols.
+    """
+
     symbols_count: int
     references_count: int
 
 
 def scan_project(project_path: Path) -> ScanResult | None:
-    """Scan a Java project directory and build the semantic graph.
+    """
+    Scan a Java project directory and build the semantic graph.
 
     Args:
         project_path: Root path of the Java project.

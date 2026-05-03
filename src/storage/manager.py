@@ -26,7 +26,19 @@ PENDING_PLAN_FILE = "pending_plan.json"
 
 
 class StorageManager:
-    """Manages persistent storage in the .voyager directory."""
+    """
+    Manage persistent storage in the ``.voyager`` directory inside a project.
+
+    The ``.voyager`` directory is the sole persistent state location.  All files are
+    derived from source code and can be rebuilt from scratch (scan), so the directory
+    can be safely deleted or regenerated.
+
+    Responsibilities:
+        - Save/load the semantic graph (``.voyager/graph.json``)
+        - Persist pending operation plans (``.voyager/pending_plan.json``)
+        - Append to the operation log (``.voyager/operations.log``)
+        - Locate optional project rules (``.voyager/rules.yaml``)
+    """
 
     def __init__(self, project_path: Path) -> None:
         self.project_path = project_path
@@ -34,15 +46,15 @@ class StorageManager:
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
-        """Ensure the .voyager directory exists."""
+        """
+        Ensure the .voyager directory exists.
+        """
         self.voyager_dir.mkdir(parents=True, exist_ok=True)
         (self.voyager_dir / CACHE_DIR).mkdir(exist_ok=True)
 
     def load_graph(self) -> SemanticGraph | None:
-        """Load the semantic graph from disk.
-
-        Returns:
-            SemanticGraph if it exists and is valid, None otherwise.
+        """
+        Load the semantic graph from disk.
         """
         graph_path = self.voyager_dir / GRAPH_FILE
         if not graph_path.exists():
@@ -59,7 +71,9 @@ class StorageManager:
             return None
 
     def save_graph(self, graph: SemanticGraph) -> None:
-        """Save the semantic graph to disk."""
+        """
+        Save the semantic graph to disk.
+        """
         graph_path = self.voyager_dir / GRAPH_FILE
         data = graph.model_dump(mode="json")
         graph_path.write_text(
@@ -69,18 +83,24 @@ class StorageManager:
         logger.info("Saved graph to %s (%d symbols)", graph_path, len(graph.symbols))
 
     def load_rules_path(self) -> Path:
-        """Return the path to the rules file (may not exist)."""
+        """
+        Return the path to the rules file (may not exist).
+        """
         return self.voyager_dir / RULES_FILE
 
     def load_pending_plan(self) -> dict | None:
-        """Load the pending operation plan, if present."""
+        """
+        Load the pending operation plan, if present.
+        """
         plan_path = self.voyager_dir / PENDING_PLAN_FILE
         if not plan_path.exists():
             return None
         return json.loads(plan_path.read_text(encoding="utf-8"))
 
     def save_pending_plan(self, operation) -> Path:
-        """Persist an operation plan for a later apply step."""
+        """
+        Persist an operation plan for a later apply step.
+        """
         plan_path = self.voyager_dir / PENDING_PLAN_FILE
         data = operation.model_dump(mode="json") if hasattr(operation, "model_dump") else operation
         plan_path.write_text(
@@ -90,15 +110,19 @@ class StorageManager:
         return plan_path
 
     def clear_pending_plan(self) -> None:
-        """Remove the pending plan file."""
+        """
+        Remove the pending plan file.
+        """
         (self.voyager_dir / PENDING_PLAN_FILE).unlink(missing_ok=True)
 
     def log_operation(self, operation, modified_files: list[str]) -> None:
-        """Append an operation to the operations log."""
+        """
+        Append an operation to the operations log.
+        """
         log_path = self.voyager_dir / OPERATIONS_LOG
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "operation": operation.model_dump(mode="json") if hasattr(operation, 'model_dump') else str(operation),
+            "operation": operation.model_dump(mode="json") if hasattr(operation, "model_dump") else str(operation),
             "modified_files": modified_files,
         }
 
@@ -108,12 +132,16 @@ class StorageManager:
         logger.info("Logged operation to %s", log_path)
 
     def invalidate_graph(self) -> None:
-        """Remove the cached graph, forcing a rebuild on next access."""
+        """
+        Remove the cached graph, forcing a rebuild on next access.
+        """
         graph_path = self.voyager_dir / GRAPH_FILE
         if graph_path.exists():
             graph_path.unlink()
             logger.info("Invalidated graph cache")
 
     def get_cache_dir(self) -> Path:
-        """Return the cache directory path."""
+        """
+        Return the cache directory path.
+        """
         return self.voyager_dir / CACHE_DIR

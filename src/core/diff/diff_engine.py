@@ -6,13 +6,15 @@ Generates structured diffs between original and modified file contents.
 from __future__ import annotations
 
 import difflib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 @dataclass
 class FileDiff:
-    """Structured diff for a single file."""
+    """
+    Structured diff for a single file.
+    """
 
     file_path: str
     unified_diff: str
@@ -22,21 +24,13 @@ class FileDiff:
 
 
 class DiffEngine:
-    """Generates diffs between original and modified file contents."""
-
-    def __init__(self) -> None:
-        pass
+    """
+    Generates diffs between original and modified file contents.
+    """
 
     def diff_file(self, file_path: Path, original: str, modified: str) -> FileDiff:
-        """Generate a unified diff for a single file.
-
-        Args:
-            file_path: Path to the file.
-            original: Original file content.
-            modified: Modified file content.
-
-        Returns:
-            FileDiff with unified diff string.
+        """
+        Generate a unified diff for a single file.
         """
         original_lines = original.splitlines(keepends=True)
         modified_lines = modified.splitlines(keepends=True)
@@ -65,13 +59,8 @@ class DiffEngine:
         )
 
     def diff_files(self, file_states: dict[Path, tuple[str, str]]) -> list[FileDiff]:
-        """Generate diffs for multiple files.
-
-        Args:
-            file_states: Mapping of file path to (original_content, modified_content).
-
-        Returns:
-            List of FileDiff objects, one per modified file.
+        """
+        Generate diffs for multiple files.
         """
         diffs = []
         for fp, (original, modified) in file_states.items():
@@ -80,7 +69,9 @@ class DiffEngine:
         return diffs
 
     def format_summary(self, diffs: list[FileDiff]) -> str:
-        """Format a human-readable summary of all diffs."""
+        """
+        Format a human-readable summary of all diffs.
+        """
         if not diffs:
             return "No changes."
 

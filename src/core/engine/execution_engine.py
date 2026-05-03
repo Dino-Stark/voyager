@@ -36,23 +36,62 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FilePatch:
+    """
+    An in-memory representation of a pending file modification.
+
+    Captures the original and modified content so the engine can apply the
+    changes atomically and roll back on failure.
+
+    Attributes:
+        path: Absolute path to the file being modified.
+        original: File content before modification.
+        modified: File content after modification.
+    """
+
     path: Path
     original: str
     modified: str
 
 
 class ExecutionEngine:
-    """Plan and execute operations with all-or-nothing semantics."""
+    """
+    Plan and execute operations with all-or-nothing semantics.
+
+    This is the central orchestrator for Voyager's semantic operations.  The fixed
+    V1 pipeline is:
+
+    1. :meth:`plan` -- validate pre-conditions against the current graph
+    2. :meth:`apply` -- build patches, re-validate, commit
+
+    Rename requires JDT LS and goes through the full pipeline.  All other
+    operations are rejected if the required tooling is unavailable.
+    """
 
     def __init__(self, project_path: Path, storage: StorageManager | None = None) -> None:
+        """
+        Initialize the execution engine.
+
+        Args:
+            project_path: Root directory of the Java project to operate on.
+            storage: Optional storage manager for persisting graphs and rules.
+                     Defaults to a new StorageManager scoped to project_path.
+        """
         self.project_path = project_path.resolve()
         self.storage = storage or StorageManager(self.project_path)
         self.graph: SemanticGraph | None = None
         self.validator = RuleValidator(self.storage.load_rules_path())
 
     def ensure_graph(self, force_rebuild: bool = False) -> SemanticGraph:
-        """Load a graph from storage or build one from source."""
+        """
+        Load a graph from storage or build one from source.
 
+        Args:
+            force_rebuild: If True, discard any cached graph and rebuild from source.
+                           If False (default), return the cached graph if available.
+
+        Returns:
+            The semantic graph for the project.
+        """
         if self.graph is not None and not force_rebuild:
             return self.graph
 
@@ -66,14 +105,30 @@ class ExecutionEngine:
         return graph
 
     def rebuild_graph_static(self, file_overrides: dict[Path, str] | None = None) -> SemanticGraph:
-        """Rebuild the graph with optional in-memory file content."""
+        """
+        Rebuild the graph with optional in-memory file content.
 
+        Args:
+            file_overrides: Mapping of file paths to their content, used to simulate
+                           uncommitted changes without touching the filesystem.
+
+        Returns:
+            A fresh semantic graph reflecting the given file overrides.
+        """
         classes = parse_java_project_static_with_overrides(self.project_path, file_overrides or {})
         return GraphBuilder(self.project_path).build(classes)
 
     def plan(self, operation: Operation) -> PlanResult:
-        """Validate an operation and compute the likely affected files."""
+        """
+        Validate an operation and compute the likely affected files.
 
+        Args:
+            operation: The semantic operation to validate (e.g. RenameFieldOp).
+
+        Returns:
+            A PlanResult indicating whether the operation is valid and which
+            files are expected to be affected.
+        """
         graph = self.ensure_graph()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
@@ -92,8 +147,19 @@ class ExecutionEngine:
         )
 
     def apply(self, operation: Operation) -> ApplyResult:
-        """Apply an operation through the fixed V1 pipeline."""
+        """
+        Apply an operation through the fixed V1 pipeline.
 
+        The pipeline validates pre-conditions, builds file patches, re-validates
+        against the patched graph, then commits the changes atomically.
+
+        Args:
+            operation: The semantic operation to execute (e.g. RenameFieldOp).
+
+        Returns:
+            An ApplyResult indicating success or failure, including any
+            modified files or validation errors.
+        """
         graph = self.ensure_graph()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
@@ -249,8 +315,18 @@ class ExecutionEngine:
             ) from exc
 
     def _commit(self, patches: list[FilePatch]) -> list[str]:
-        """Write all patches, rolling back if any write fails."""
+        """
+        Write all patches, rolling back if any write fails.
 
+        Args:
+            patches: List of FilePatch objects describing the changes to apply.
+
+        Returns:
+            List of relative paths for all successfully modified files.
+
+        Raises:
+            EngineError: If a write fails and rollback cannot fully restore state.
+        """
         backups = {patch.path: patch.original for patch in patches}
         modified: list[str] = []
 
@@ -272,14 +348,14 @@ class ExecutionEngine:
 
 
 def apply_lsp_edits(content: str, edits: list[LspTextEdit]) -> str:
-    """Apply LSP edits to content.
+    """
+    Apply LSP edits to content.
 
     Edits are applied from the end of the file to the beginning so ranges remain
     valid.  Offsets are computed against UTF-16 code units as specified by LSP.
     For ASCII/typical Java source this is identical to Python character offsets;
     the helper still handles non-ASCII by measuring UTF-16 units.
     """
-
     line_offsets = _line_offsets(content)
 
     def offset_for(position: LspPosition) -> int:
@@ -325,8 +401,9 @@ def _utf16_index_to_py_index(text: str, utf16_index: int) -> int:
 
 
 def _normalize_newlines(modified: str, original: str) -> str:
-    """Normalize mixed newlines introduced by LSP edits."""
-
+    """
+    Normalize mixed newlines introduced by LSP edits.
+    """
     preferred = "\r\n" if "\r\n" in original else "\n"
     return modified.replace("\r\n", "\n").replace("\r", "\n").replace("\n", preferred)
 

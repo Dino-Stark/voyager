@@ -10,6 +10,13 @@ from enum import Enum
 
 
 class ErrorType(str, Enum):
+    """
+    All structured error codes emitted by the execution engine.
+
+    These are serialised into the ``errors`` field of :class:`ApplyResult` so
+    callers can programmatically distinguish failure modes.
+    """
+
     SYMBOL_NOT_FOUND = "symbol_not_found"
     SYMBOL_ALREADY_EXISTS = "symbol_already_exists"
     VALIDATION_FAILED = "validation_failed"
@@ -22,7 +29,13 @@ class ErrorType(str, Enum):
 
 
 class EngineError(Exception):
-    """Base error for the execution engine."""
+    """
+    Base error for the execution engine.
+
+    All engine errors are recoverable and carry structured context (error type,
+    human-readable message, target symbol, and optional file path) so that
+    callers can present them to users or log them for debugging.
+    """
 
     def __init__(
         self,
@@ -50,7 +63,9 @@ class EngineError(Exception):
 
 
 class SymbolNotFoundError(EngineError):
-    """Raised when a target symbol cannot be found in the graph."""
+    """
+    Raised when a target symbol cannot be found in the graph.
+    """
 
     def __init__(self, target: str, file_path: str | None = None) -> None:
         super().__init__(
@@ -62,7 +77,9 @@ class SymbolNotFoundError(EngineError):
 
 
 class SymbolAlreadyExistsError(EngineError):
-    """Raised when trying to create a symbol that already exists."""
+    """
+    Raised when trying to create a symbol that already exists.
+    """
 
     def __init__(self, target: str, file_path: str | None = None) -> None:
         super().__init__(
@@ -74,7 +91,9 @@ class SymbolAlreadyExistsError(EngineError):
 
 
 class RuleViolationError(EngineError):
-    """Raised when an operation violates a rule."""
+    """
+    Raised when an operation violates a rule.
+    """
 
     def __init__(self, rule_id: str, message: str, target: str | None = None) -> None:
         super().__init__(
@@ -86,7 +105,9 @@ class RuleViolationError(EngineError):
 
 
 class ValidationError(EngineError):
-    """Raised when post-apply validation fails."""
+    """
+    Raised when post-apply validation fails.
+    """
 
     def __init__(self, message: str, target: str | None = None) -> None:
         super().__init__(
@@ -97,7 +118,9 @@ class ValidationError(EngineError):
 
 
 class LspUnavailableError(EngineError):
-    """Raised when a semantic operation requires LSP but no server is available."""
+    """
+    Raised when a semantic operation requires LSP but no server is available.
+    """
 
     def __init__(self, message: str, target: str | None = None) -> None:
         super().__init__(
@@ -108,7 +131,9 @@ class LspUnavailableError(EngineError):
 
 
 class UnsupportedOperationError(EngineError):
-    """Raised when an operation exists in the model but is not supported in V1."""
+    """
+    Raised when an operation exists in the model but is not supported in V1.
+    """
 
     def __init__(self, message: str, target: str | None = None) -> None:
         super().__init__(

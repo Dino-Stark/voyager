@@ -20,7 +20,8 @@ console = Console()
 
 
 def apply_plan(skip_confirm: bool = False) -> dict | None:
-    """Apply the pending planned operation.
+    """
+    Apply the pending planned operation.
 
     Args:
         skip_confirm: If True, skip the confirmation prompt.
@@ -66,7 +67,9 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
 
 
 def _find_project_root() -> Path:
-    """Find the project root by looking for .voyager directory."""
+    """
+    Find the project root by looking for .voyager directory.
+    """
     current = Path.cwd()
     while current != current.parent:
         if (current / ".voyager").exists():
@@ -76,7 +79,9 @@ def _find_project_root() -> Path:
 
 
 def _deserialize_operation(data: dict) -> Operation:
-    """Deserialize an operation from a dict."""
+    """
+    Deserialize an operation from a dict.
+    """
     op_type = data.get("op", "")
     if op_type == "rename_field":
         return RenameFieldOp(**data)

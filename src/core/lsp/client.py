@@ -24,7 +24,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class LspPosition:
-    """A zero-based LSP document position."""
+    """
+    A zero-based LSP document position.
+
+    LSP positions are 0-based (both line and character).  Python code that reads
+    from source files typically uses 1-based line numbers, so convert when
+    bridging between the two systems.
+
+    Attributes:
+        line: 0-based line index.
+        character: 0-based column index, measured in UTF-16 code units per the
+            LSP spec.  For ASCII characters this equals the byte/char offset.
+    """
 
     line: int
     character: int
@@ -35,7 +46,16 @@ class LspPosition:
 
 @dataclass(frozen=True)
 class LspRange:
-    """A zero-based LSP document range."""
+    """
+    A zero-based LSP document range.
+
+    Represents a span of text in a document.  The range is half-open:
+    the character at ``end`` is not included.
+
+    Attributes:
+        start: Start position (inclusive).
+        end: End position (exclusive).
+    """
 
     start: LspPosition
     end: LspPosition
@@ -46,7 +66,15 @@ class LspRange:
 
 @dataclass(frozen=True)
 class LspLocation:
-    """A source location returned by an LSP server."""
+    """
+    A source location returned by an LSP server.
+
+    Identifies a span of text in a specific file.
+
+    Attributes:
+        uri: File URI, e.g. ``file:///D:/project/src/OrderDTO.java``.
+        range: The span within the file.
+    """
 
     uri: str
     range: LspRange
@@ -54,7 +82,27 @@ class LspLocation:
 
 @dataclass
 class LspSymbolInfo:
-    """DocumentSymbol information returned by an LSP server."""
+    """
+    DocumentSymbol information returned by an LSP server.
+
+    Returned by ``textDocument/documentSymbol``.  This class mirrors the
+    DocumentSymbol shape defined in the LSP spec, but stores both fields so
+    callers can choose the appropriate granularity.
+
+    Attributes:
+        name: Symbol name, e.g. the class or method name.
+        kind: LSP SymbolKind integer (Class=5, Method=6, Field=8, ...).
+        detail: Additional detail, e.g. full method signature or field type.
+        uri: File URI this symbol belongs to.
+        range: Full extent of the symbol, including its body.  Used by LSP
+            clients to determine whether a cursor position falls *inside* the
+            symbol (for "reveal in sidebar" / navigation).  Not used by Voyager.
+        selection_range: The span that should be selected when the user
+            navigates to / reveals this symbol, typically just the name.
+            Voyager uses this for source position (line / column) and as the
+            cursor anchor when requesting LSP rename.
+        children: Nested symbols, e.g. fields and methods inside a class.
+    """
 
     name: str
     kind: int
@@ -67,7 +115,17 @@ class LspSymbolInfo:
 
 @dataclass(frozen=True)
 class LspTextEdit:
-    """A single LSP text edit."""
+    """
+    A single LSP text edit.
+
+    Represents a replacement of ``range`` with ``new_text``.  The range is
+    half-open (the character at ``range.end`` is not replaced).
+
+    Attributes:
+        range: The span to replace.  Measured in UTF-16 code units per the
+            LSP spec; see :func:`_utf16_index_to_py_index` for conversion.
+        new_text: The replacement text.
+    """
 
     range: LspRange
     new_text: str
@@ -75,10 +133,15 @@ class LspTextEdit:
 
 @dataclass
 class LspWorkspaceEdit:
-    """A parsed subset of WorkspaceEdit.
+    """
+    A parsed subset of :lsp:`WorkspaceEdit`.
 
-    V1 supports the two common shapes emitted by language servers:
-    ``changes`` and ``documentChanges`` containing text document edits.
+    The core result of an LSP rename operation.  V1 supports the two common
+    shapes emitted by language servers: ``changes`` (map of URI to edits) and
+    ``documentChanges`` (list of text document edits with explicit URIs).
+
+    Attributes:
+        changes: Map of file URI to the list of edits that apply to that file.
     """
 
     changes: dict[str, list[LspTextEdit]] = field(default_factory=dict)
@@ -109,7 +172,24 @@ def uri_to_path(uri: str) -> Path:
 
 
 class LspClient:
-    """Generic LSP client that talks JSON-RPC over stdio."""
+    """
+    Generic LSP client that speaks JSON-RPC over stdio.
+
+    This is a thin client: it launches the language server process, sends requests
+    and notifications, and parses responses.  Transactionality and validation live
+    in the :class:`ExecutionEngine <core.engine.execution_engine.ExecutionEngine>`.
+
+    **Lifecycle:** use as an async context manager (``async with``) so ``start()``
+    is called on entry and ``shutdown()`` on exit.
+
+    **Protocol:** messages are JSON-RPC 2.0 objects preceded by a ``Content-Length``
+    header.  Each request gets a Future that is resolved when the matching response
+    arrives in the background read loop.
+
+    **File sync:** the client tracks open files and sends ``textDocument/didOpen``
+    and ``textDocument/didChange`` notifications so the server stays in sync with
+    in-memory content during rename operations.
+    """
 
     def __init__(
         self,

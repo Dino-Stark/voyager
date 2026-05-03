@@ -15,7 +15,14 @@ from pathlib import Path
 
 
 class Language(str, Enum):
-    """Supported programming languages."""
+    """
+    Supported programming languages for LSP analysis.
+
+    Each value maps to a language server that Voyager knows how to launch and
+    communicate with.  See :class:`LanguageConfig` for server details.
+
+    Currently only Java (Eclipse JDT Language Server) is implemented.
+    """
 
     JAVA = "java"
     # TODO: Python = "python"    # pyright-langserver --stdio
@@ -27,7 +34,13 @@ class Language(str, Enum):
 
 @dataclass
 class LanguageConfig:
-    """Configuration for a specific language's LSP server."""
+    """
+    Configuration for launching and initialising a language server.
+
+    Describes how to find the server binary, which file extensions it handles,
+    and any server-specific initialisation options sent during the ``initialize``
+    handshake.
+    """
 
     language: Language
     file_extensions: list[str]
@@ -35,7 +48,9 @@ class LanguageConfig:
     initialization_options: dict = field(default_factory=dict)
 
     def find_server_command(self) -> list[str] | None:
-        """Check if the LSP server binary is available on PATH."""
+        """
+        Check if the LSP server binary is available on PATH.
+        """
         executable = self.command[0]
         rest = self.command[1:]
 
@@ -56,16 +71,8 @@ class LanguageConfig:
 
 
 def get_language_config(language: Language) -> LanguageConfig:
-    """Get the LSP server configuration for a given language.
-
-    Args:
-        language: The target programming language.
-
-    Returns:
-        LanguageConfig with server command and init options.
-
-    Raises:
-        NotImplementedError: If the language is not yet supported.
+    """
+    Get the LSP server configuration for a given language.
     """
     configs: dict[Language, LanguageConfig] = {
         Language.JAVA: LanguageConfig(
@@ -82,41 +89,6 @@ def get_language_config(language: Language) -> LanguageConfig:
                 }
             },
         ),
-        # TODO: Add Python support with pyright-langserver
-        # Language.PYTHON: LanguageConfig(
-        #     language=Language.PYTHON,
-        #     file_extensions=[".py"],
-        #     command=["pyright-langserver", "--stdio"],
-        #     initialization_options={},
-        # ),
-        # TODO: Add TypeScript/JavaScript support
-        # Language.TYPESCRIPT: LanguageConfig(
-        #     language=Language.TYPESCRIPT,
-        #     file_extensions=[".ts", ".tsx", ".js", ".jsx"],
-        #     command=["typescript-language-server", "--stdio"],
-        #     initialization_options={},
-        # ),
-        # TODO: Add C# support with OmniSharp
-        # Language.CSHARP: LanguageConfig(
-        #     language=Language.CSHARP,
-        #     file_extensions=[".cs"],
-        #     command=["OmniSharp", "-lsp"],
-        #     initialization_options={},
-        # ),
-        # TODO: Add Go support with gopls
-        # Language.GO: LanguageConfig(
-        #     language=Language.GO,
-        #     file_extensions=[".go"],
-        #     command=["gopls"],
-        #     initialization_options={},
-        # ),
-        # TODO: Add C/C++ support with clangd
-        # Language.CPP: LanguageConfig(
-        #     language=Language.CPP,
-        #     file_extensions=[".c", ".cpp", ".h", ".hpp"],
-        #     command=["clangd"],
-        #     initialization_options={},
-        # ),
     }
 
     if language not in configs:
@@ -128,27 +100,11 @@ def get_language_config(language: Language) -> LanguageConfig:
 
 
 def detect_language(file_path: Path) -> Language | None:
-    """Detect the programming language of a file based on its extension.
-
-    Args:
-        file_path: Path to the source file.
-
-    Returns:
-        The detected Language, or None if unknown.
+    """
+    Detect the programming language of a file based on its extension.
     """
     ext = file_path.suffix.lower()
     lang_map: dict[str, Language] = {
         ".java": Language.JAVA,
-        # TODO: ".py": Language.PYTHON,
-        # TODO: ".ts": Language.TYPESCRIPT,
-        # TODO: ".tsx": Language.TYPESCRIPT,
-        # TODO: ".js": Language.TYPESCRIPT,
-        # TODO: ".jsx": Language.TYPESCRIPT,
-        # TODO: ".cs": Language.CSHARP,
-        # TODO: ".go": Language.GO,
-        # TODO: ".c": Language.CPP,
-        # TODO: ".cpp": Language.CPP,
-        # TODO: ".h": Language.CPP,
-        # TODO: ".hpp": Language.CPP,
     }
     return lang_map.get(ext)

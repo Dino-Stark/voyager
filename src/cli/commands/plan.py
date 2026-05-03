@@ -13,7 +13,8 @@ console = Console()
 
 
 def plan_operation(op_type: str, target: str, value: str | None) -> object | None:
-    """Plan an operation and display affected files.
+    """
+    Plan an operation and display affected files.
 
     Args:
         op_type: Type of operation (rename, add_field, remove_field).
@@ -67,7 +68,9 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
 
 
 def _build_operation(op_type: str, target: str, value: str | None) -> Operation:
-    """Build an operation object from CLI arguments."""
+    """
+    Build an operation object from CLI arguments.
+    """
     if op_type == "rename":
         if not value:
             raise ValueError("'rename' requires a new name as the third argument")
@@ -89,7 +92,9 @@ def _build_operation(op_type: str, target: str, value: str | None) -> Operation:
 
 
 def _find_project_root() -> Path:
-    """Find the project root by looking for .voyager directory."""
+    """
+    Find the project root by looking for .voyager directory.
+    """
     current = Path.cwd()
     while current != current.parent:
         if (current / ".voyager").exists():
