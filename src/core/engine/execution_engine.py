@@ -20,12 +20,12 @@ from core.graph.semantic_graph import SemanticGraph
 from core.lsp.client import LspClient, LspPosition, LspTextEdit, uri_to_path
 from core.lsp.config import Language, get_language_config
 from core.operation.models import (
-    AddFieldOp,
+    AddFieldOperation,
     ApplyResult,
     Operation,
     PlanResult,
-    RemoveFieldOp,
-    RenameFieldOp,
+    RemoveFieldOperation,
+    RenameFieldOperation,
 )
 from core.parser.java_parser import parse_java_project, parse_java_project_static_with_overrides
 from core.rules.validator import RuleValidator
@@ -208,16 +208,16 @@ class ExecutionEngine:
             return ApplyResult(success=False, operation=operation, errors=[error.to_dict()])
 
     def _build_patches(self, graph: SemanticGraph, operation: Operation) -> list[FilePatch]:
-        if isinstance(operation, RenameFieldOp):
+        if isinstance(operation, RenameFieldOperation):
             return self._build_rename_patches(graph, operation)
-        if isinstance(operation, AddFieldOp):
+        if isinstance(operation, AddFieldOperation):
             raise UnsupportedOperationError("add_field is declared but not implemented in V1")
-        if isinstance(operation, RemoveFieldOp):
+        if isinstance(operation, RemoveFieldOperation):
             raise UnsupportedOperationError("remove_field is declared but not implemented in V1")
         raise UnsupportedOperationError(f"Unsupported operation: {operation}")
 
     def _build_rename_patches(
-        self, graph: SemanticGraph, operation: RenameFieldOp
+        self, graph: SemanticGraph, operation: RenameFieldOperation
     ) -> list[FilePatch]:
         field_symbol = graph.resolve_field(operation.class_name, operation.field_name)
         if field_symbol is None:
@@ -271,7 +271,7 @@ class ExecutionEngine:
         self,
         source_path: Path,
         field_symbol: Any,
-        operation: RenameFieldOp,
+        operation: RenameFieldOperation,
     ):
         async with LspClient(Language.JAVA, self.project_path) as client:
             position = LspPosition(
@@ -289,12 +289,12 @@ class ExecutionEngine:
             return await client.rename_symbol(source_path, position, operation.to)
 
     def _compute_affected_files(self, graph: SemanticGraph, operation: Operation) -> list[str]:
-        if isinstance(operation, RenameFieldOp):
+        if isinstance(operation, RenameFieldOperation):
             return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
-        if isinstance(operation, AddFieldOp):
+        if isinstance(operation, AddFieldOperation):
             symbol = graph.resolve_class(operation.class_name)
             return [symbol.file_path] if symbol else []
-        if isinstance(operation, RemoveFieldOp):
+        if isinstance(operation, RemoveFieldOperation):
             return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
         return []
 

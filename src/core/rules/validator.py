@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from core.graph.semantic_graph import RefType, SemanticGraph, SymbolType
-from core.operation.models import AddFieldOp, Operation, RemoveFieldOp, RenameFieldOp
+from core.operation.models import AddFieldOperation, Operation, RemoveFieldOperation, RenameFieldOperation
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,10 @@ class RuleValidator:
     def validate_pre(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
         violations: list[dict] = []
 
-        if isinstance(operation, RenameFieldOp):
+        # TODO: I suppose all these "kinds" can be replaced with static strings.
+        # TODO: And I suppose we can use strategy pattern here to support various operations.
+
+        if isinstance(operation, RenameFieldOperation):
             field = graph.resolve_field(operation.class_name, operation.field_name)
             if field is None:
                 violations.append(
@@ -96,7 +99,7 @@ class RuleValidator:
                     )
                 )
 
-        elif isinstance(operation, AddFieldOp):
+        elif isinstance(operation, AddFieldOperation):
             if graph.resolve_class(operation.class_name) is None:
                 violations.append(
                     _violation(
@@ -114,7 +117,7 @@ class RuleValidator:
                     )
                 )
 
-        elif isinstance(operation, RemoveFieldOp):
+        elif isinstance(operation, RemoveFieldOperation):
             if graph.resolve_field(operation.class_name, operation.field_name) is None:
                 violations.append(
                     _violation(
@@ -130,7 +133,7 @@ class RuleValidator:
     def validate_post(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
         violations = self._check_duplicate_definitions(graph)
 
-        if isinstance(operation, RenameFieldOp):
+        if isinstance(operation, RenameFieldOperation):
             class_symbol = graph.resolve_class(operation.class_name)
             old_target_id = (
                 f"{class_symbol.id}.{operation.field_name}" if class_symbol is not None else None
@@ -254,6 +257,7 @@ class RuleValidator:
         return violations
 
 
+# TODO: Why don't we use a strong type here?
 def _violation(
     kind: str,
     message: str,

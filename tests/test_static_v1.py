@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from core.engine.execution_engine import ExecutionEngine, _normalize_newlines, apply_lsp_edits
 from core.graph.builder import GraphBuilder
 from core.lsp.client import LspPosition, LspRange, LspTextEdit
-from core.operation.models import RenameFieldOp
+from core.operation.models import RenameFieldOperation
 from core.parser.java_parser import parse_java_project_static
 from core.rules.validator import RuleValidator
 
@@ -69,7 +69,7 @@ def test_plan_accepts_unambiguous_simple_class_name(java_project: Path) -> None:
     graph = GraphBuilder(java_project).build(parse_java_project_static(java_project))
     engine.graph = graph
 
-    result = engine.plan(RenameFieldOp(target="OrderDTO.userId", to="customerId"))
+    result = engine.plan(RenameFieldOperation(target="OrderDTO.userId", to="customerId"))
 
     assert result.is_valid
     assert result.violations == []
@@ -110,7 +110,7 @@ def test_apply_refuses_rename_without_lsp(monkeypatch: pytest.MonkeyPatch, java_
 
     monkeypatch.setattr("core.engine.execution_engine.get_language_config", lambda language: FakeConfig())
 
-    result = engine.apply(RenameFieldOp(target="OrderDTO.userId", to="customerId"))
+    result = engine.apply(RenameFieldOperation(target="OrderDTO.userId", to="customerId"))
 
     assert not result.success
     assert result.errors[0]["type"] == "lsp_unavailable"
@@ -131,7 +131,7 @@ public class OrderDTO {
 
     graph = GraphBuilder(java_project).build(parse_java_project_static(java_project))
     violations = RuleValidator().validate_post(
-        graph, RenameFieldOp(target="OrderDTO.userId", to="customerId")
+        graph, RenameFieldOperation(target="OrderDTO.userId", to="customerId")
     )
 
     assert any(item["type"] == "validation_failed" for item in violations)

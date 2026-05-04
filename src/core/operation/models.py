@@ -28,7 +28,7 @@ class OperationType(str, Enum):
     UPDATE_FUNCTION_SIGNATURE = "update_function_signature"
 
 
-class RenameFieldOp(BaseModel):
+class RenameFieldOperation(BaseModel):
     """
     Rename a field in a DTO class.
 
@@ -48,7 +48,7 @@ class RenameFieldOp(BaseModel):
     to: str = Field(description="New field name")
 
     @model_validator(mode="after")
-    def validate_target_format(self) -> RenameFieldOp:
+    def validate_target_format(self) -> RenameFieldOperation:
         parts = self.target.split(".", 1)
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(
@@ -57,7 +57,7 @@ class RenameFieldOp(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_new_name(self) -> RenameFieldOp:
+    def validate_new_name(self) -> RenameFieldOperation:
         if not self.to.isidentifier():
             raise ValueError(f"New field name must be a valid identifier, got: '{self.to}'")
         return self
@@ -70,14 +70,15 @@ class RenameFieldOp(BaseModel):
     def field_name(self) -> str:
         return self.target.split(".", 1)[1]
 
-    def reverse(self) -> RenameFieldOp:
+    def reverse(self) -> RenameFieldOperation:
         """
         Return the inverse operation for rollback.
         """
-        return RenameFieldOp(target=f"{self.class_name}.{self.to}", to=self.field_name)
+        return RenameFieldOperation(target=f"{self.class_name}.{self.to}", to=self.field_name)
 
 
-class AddFieldOp(BaseModel):
+# TODO: I suppose we need to add model_validator for both AddFieldOperation & RemoveFieldOperation.
+class AddFieldOperation(BaseModel):
     """
     Add a new field to a DTO class.
 
@@ -102,14 +103,14 @@ class AddFieldOp(BaseModel):
     def class_name(self) -> str:
         return self.target
 
-    def reverse(self) -> RemoveFieldOp:
+    def reverse(self) -> RemoveFieldOperation:
         """
         Return the inverse operation for rollback.
         """
-        return RemoveFieldOp(target=self.target, field_name=self.field_name)
+        return RemoveFieldOperation(target=self.target, field_name=self.field_name)
 
 
-class RemoveFieldOp(BaseModel):
+class RemoveFieldOperation(BaseModel):
     """
     Remove a field from a DTO class.
 
@@ -129,15 +130,15 @@ class RemoveFieldOp(BaseModel):
     def class_name(self) -> str:
         return self.target
 
-    def reverse(self) -> AddFieldOp:
+    def reverse(self) -> AddFieldOperation:
         """
         Return the inverse operation for rollback (simplified, loses type info).
         """
-        return AddFieldOp(target=self.target, field_name=self.field_name)
+        return AddFieldOperation(target=self.target, field_name=self.field_name)
 
 
 # Union type for all supported operations
-Operation = RenameFieldOp | AddFieldOp | RemoveFieldOp
+Operation = RenameFieldOperation | AddFieldOperation | RemoveFieldOperation
 
 
 class PlanResult(BaseModel):

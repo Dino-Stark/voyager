@@ -6,7 +6,7 @@ from pathlib import Path
 
 from rich.console import Console
 from core.engine.execution_engine import ExecutionEngine
-from core.operation.models import AddFieldOp, Operation, RemoveFieldOp, RenameFieldOp
+from core.operation.models import AddFieldOperation, Operation, RemoveFieldOperation, RenameFieldOperation
 from storage.manager import StorageManager
 
 console = Console()
@@ -74,19 +74,19 @@ def _build_operation(op_type: str, target: str, value: str | None) -> Operation:
     if op_type == "rename":
         if not value:
             raise ValueError("'rename' requires a new name as the third argument")
-        return RenameFieldOp(target=target, to=value)
+        return RenameFieldOperation(target=target, to=value)
     elif op_type == "add_field":
         parts = target.split(".", 1)
         class_name = parts[0]
         field_name = value or (parts[1] if len(parts) > 1 else "")
         if not field_name:
             raise ValueError("'add_field' requires <class> <field_name> [type]")
-        return AddFieldOp(target=class_name, field_name=field_name)
+        return AddFieldOperation(target=class_name, field_name=field_name)
     elif op_type == "remove_field":
         parts = target.split(".", 1)
         if len(parts) != 2:
             raise ValueError("'remove_field' requires target in format ClassName.fieldName")
-        return RemoveFieldOp(target=parts[0], field_name=parts[1])
+        return RemoveFieldOperation(target=parts[0], field_name=parts[1])
     else:
         raise ValueError(f"Unknown operation type: {op_type}")
 

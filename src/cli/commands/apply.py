@@ -9,10 +9,10 @@ from rich.prompt import Confirm
 
 from core.engine.execution_engine import ExecutionEngine
 from core.operation.models import (
-    AddFieldOp,
+    AddFieldOperation,
     Operation,
-    RemoveFieldOp,
-    RenameFieldOp,
+    RemoveFieldOperation,
+    RenameFieldOperation,
 )
 from storage.manager import StorageManager
 
@@ -84,10 +84,10 @@ def _deserialize_operation(data: dict) -> Operation:
     """
     op_type = data.get("op", "")
     if op_type == "rename_field":
-        return RenameFieldOp(**data)
+        return RenameFieldOperation(**data)
     elif op_type == "add_field":
-        return AddFieldOp(**data)
+        return AddFieldOperation(**data)
     elif op_type == "remove_field":
-        return RemoveFieldOp(**data)
+        return RemoveFieldOperation(**data)
     else:
         raise ValueError(f"Unknown operation type: {op_type}")
