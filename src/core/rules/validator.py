@@ -19,10 +19,12 @@ class RuleAction(str, Enum):
     """
     Severity level for a rule violation.
     """
+    WARN = "warn"
+    ERROR = "error"
 
 
 @dataclass(frozen=True)
-class RuleDef:
+class RuleDefinition:
     """
     A rule loaded from ``rules.yaml``.
 
@@ -32,6 +34,10 @@ class RuleDef:
         target: Optional scope filter, e.g. ``"DTO"``.
         action: ``"error"`` (blocks execution) or ``"warn"`` (logs only).
     """
+    id: str
+    type: str
+    target: str | None = None
+    action: RuleAction = RuleAction.ERROR
 
 
 class RuleValidator:
@@ -48,18 +54,8 @@ class RuleValidator:
     target: str | None = None
     action: RuleAction = RuleAction.ERROR
 
-
-class RuleValidator:
-    """
-    Validate operations and graph-level invariants.
-
-    Runs pre- and post-condition checks before and after every apply.  Rules are
-    loaded from ``.voyager/rules.yaml``; built-in checks include symbol existence,
-    name conflicts, and DTO uniqueness.
-    """
-
     def __init__(self, rules_path: Path | None = None) -> None:
-        self.rules: list[RuleDef] = []
+        self.rules: list[RuleDefinition] = []
         if rules_path and rules_path.exists():
             self._load_rules(rules_path)
 
@@ -68,7 +64,7 @@ class RuleValidator:
             data = yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
             for raw in data.get("rules", []):
                 self.rules.append(
-                    RuleDef(
+                    RuleDefinition(
                         id=raw["id"],
                         type=raw["type"],
                         target=raw.get("target"),
@@ -183,7 +179,7 @@ class RuleValidator:
                 violations.extend(self._check_dto_uniqueness(graph, rule))
         return violations
 
-    def _check_dto_uniqueness(self, graph: SemanticGraph, rule: RuleDef) -> list[dict]:
+    def _check_dto_uniqueness(self, graph: SemanticGraph, rule: RuleDefinition) -> list[dict]:
         violations: list[dict] = []
         class_symbols = [
             symbol
