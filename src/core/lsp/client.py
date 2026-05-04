@@ -14,7 +14,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, ParseResult
 from urllib.request import url2pathname
 
 from core.lsp.config import Language, LanguageConfig, get_language_config
@@ -160,11 +160,11 @@ def path_to_uri(path: Path) -> str:
 def uri_to_path(uri: str) -> Path:
     """Convert a file URI to a local path."""
 
-    parsed = urlparse(uri)
+    parsed: ParseResult = urlparse(uri)
     if parsed.scheme != "file":
         return Path(uri)
     if os.name == "nt":
-        raw_path = unquote(parsed.path)
+        raw_path: str = unquote(parsed.path)
         if raw_path.startswith("/") and len(raw_path) >= 3 and raw_path[2] == ":":
             raw_path = raw_path[1:]
         return Path(url2pathname(raw_path))
@@ -198,8 +198,8 @@ class LspClient:
         config: LanguageConfig | None = None,
         request_timeout: float = 30.0,
     ) -> None:
-        self.language = language
-        self.project_path = project_path.resolve()
+        self.language: Language = language
+        self.project_path: Path = project_path.resolve()
         self.config = config or get_language_config(language)
         self.request_timeout = request_timeout
 

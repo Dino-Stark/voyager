@@ -8,20 +8,68 @@ Voyager 是一个语义级的代码修改系统，保证代码修改的全局一
 
 安全地对 DTO 字段进行重命名，并自动更新所有引用（跨文件一致性）。
 
+## 依赖要求
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Python | >= 3.10 | Voyager 运行基础 |
+| JDK | 17+ | JDTLS 需要独立的 JDK 运行环境 |
+| 网络连接 | - | 首次安装时下载 JDT Language Server |
+
 ## 快速开始
 
+### 1. 安装
+
 ```bash
-# 安装
+# 安装 Python 包
 pip install -e .
 
-# 分析项目
+# 下载并安装 JDT Language Server (Java 语义分析引擎)
+python -m scripts.setup_jdtls
+```
+
+### 2. 验证安装
+
+```bash
+# 检查 JDTLS 安装状态
+python -m scripts.setup_jdtls --check
+```
+
+### 3. 分析项目
+
+```bash
 voyager scan /path/to/java/project
+```
 
-# 规划重命名
+### 4. 规划重命名
+
+```bash
 voyager plan rename OrderDTO.userId customerId
+```
 
-# 执行修改
+### 5. 执行修改
+
+```bash
 voyager apply
+```
+
+## JDTLS 安装说明
+
+Voyager 使用 Eclipse JDT Language Server 进行 Java 语义分析。`setup_jdtls.py` 脚本会自动检测操作系统和架构，下载对应版本的 JDTLS (~150MB)。
+
+| 参数 | 说明 |
+|------|------|
+| `--check` | 检查安装状态 |
+| `--os` | 指定操作系统 (windows/linux/darwin) |
+| `--arch` | 指定架构 (x64/arm64) |
+| `--force` | 强制重新安装 |
+
+```bash
+# 示例：指定平台安装
+python -m scripts.setup_jdtls --os windows --arch x64
+
+# 强制重新安装
+python -m scripts.setup_jdtls --force
 ```
 
 ## 核心原则
