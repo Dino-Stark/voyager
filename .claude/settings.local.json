@@ -7,7 +7,13 @@
       "Bash(voyager apply *)",
       "Bash(python examples/reset.py shop-dto)",
       "Bash(rm -rf examples/shop-dto/src examples/shop-dto/pom.xml)",
-      "Bash(cp -r examples/_sources/shop-dto/* examples/shop-dto/)"
+      "Bash(cp -r examples/_sources/shop-dto/* examples/shop-dto/)",
+      "Bash(git -C \"d:/DinoStark/Projects/PyCharm/voyager\" log --oneline -10)",
+      "Bash(python -m py_compile src/utils/async_helpers.py)",
+      "Bash(python -m py_compile src/core/operation/models.py)",
+      "Bash(python -m py_compile src/core/graph/semantic_graph.py)",
+      "Bash(python -m py_compile src/core/engine/execution_engine.py)",
+      "Bash(python -m py_compile src/core/parser/java_parser.py)"
     ]
   }
 }

@@ -82,7 +82,6 @@ class RenameFieldOperation(BaseModel):
         return RenameFieldOperation(target=f"{self.class_name}.{self.to}", to=self.field_name)
 
 
-# TODO: I suppose we need to add model_validator for both AddFieldOperation & RemoveFieldOperation.
 class AddFieldOperation(BaseModel):
     """
     Add a new field to a DTO class.
@@ -103,6 +102,12 @@ class AddFieldOperation(BaseModel):
     field_name: str
     field_type: str = "String"
     default_value: str | None = None
+
+    @model_validator(mode="after")
+    def validate_field_name(self) -> AddFieldOperation:
+        if not self.field_name.isidentifier():
+            raise ValueError(f"Field name must be a valid identifier, got: '{self.field_name}'")
+        return self
 
     @property
     def class_name(self) -> str:
@@ -130,6 +135,12 @@ class RemoveFieldOperation(BaseModel):
     op: Literal[OperationType.REMOVE_FIELD] = OperationType.REMOVE_FIELD
     target: str = Field(description="Target class name")
     field_name: str
+
+    @model_validator(mode="after")
+    def validate_field_name(self) -> RemoveFieldOperation:
+        if not self.field_name.isidentifier():
+            raise ValueError(f"Field name must be a valid identifier, got: '{self.field_name}'")
+        return self
 
     @property
     def class_name(self) -> str:

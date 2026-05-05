@@ -84,7 +84,9 @@ class Reference(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
-# TODO: I am not sure how to force the agents to use this class, instead of the grep command.
+# NOTE: Agents and LLM-assisted tools may default to grep-based search instead of
+# querying the SemanticGraph.  The graph provides precise, typed lookups (resolve_field,
+# find_references_to, etc.) that are more reliable than text search for semantic operations.
 class SemanticGraph(BaseModel):
     """
     Minimal V1 code graph.
@@ -104,7 +106,8 @@ class SemanticGraph(BaseModel):
     project_path: str = ""
     symbols: list[Symbol] = Field(default_factory=list)
     references: list[Reference] = Field(default_factory=list)
-    # TODO: It feels like the "references" of a field is equivalent to the search results of a symbol in IDEA.
+    # A field's references are equivalent to IntelliJ IDEA's "Find Usages" results —
+    # every location where the symbol is referenced across the project.
 
     _symbol_index: dict[str, Symbol] = PrivateAttr(default_factory=dict)
     _simple_index: dict[tuple[SymbolType, str], list[Symbol]] = PrivateAttr(default_factory=dict)
@@ -112,8 +115,9 @@ class SemanticGraph(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.build_index()
 
-    # TODO: We need another method to refresh the indexes after applying patches / adding files / deleting files.
-    # This is needed for incremental updates.
+    # Incremental index refresh is not yet implemented.  After applying patches or
+    # adding/removing files, call build_index() to rebuild from scratch.  A future
+    # optimization should support partial reindexing for large projects.
     def build_index(self) -> None:
         """
         Build in-memory lookup indexes.
@@ -123,9 +127,9 @@ class SemanticGraph(BaseModel):
         for symbol in self.symbols:
             simple_index.setdefault((symbol.type, symbol.name), []).append(symbol)
         self._simple_index = simple_index
-        # TODO: What does "_simple_index" mean? It feels like the index of simple names.
-        # But there could be multiple symbols with the same simple name.
-        # For example, there can be multiple classes with the same field name, e.g., "userId".
+        # _simple_index maps (SymbolType, simple_name) → list[Symbol].  Multiple symbols
+        # can share the same simple name (e.g. "userId" fields across different classes),
+        # so resolution via _simple_index requires disambiguation (see resolve_class/resolve_field).
 
     def get_symbol(self, symbol_id: str) -> Symbol | None:
         return self._symbol_index.get(symbol_id)

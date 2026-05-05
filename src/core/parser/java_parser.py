@@ -12,15 +12,15 @@ behavior.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Coroutine, Any, TypeVar
+from typing import Any
 
 from core.lsp.client import LspClient, LspSymbolInfo
 from core.lsp.config import Language, get_language_config
+from utils.async_helpers import run_async
 
 logger = logging.getLogger(__name__)
 
@@ -105,10 +105,6 @@ class JavaClass:
         return f"{self.package}.{self.name}" if self.package else self.name
 
 
-# TODO: Maybe we should use this class somewhere.
-class JavaParseException(Exception):
-    """Raised when Java source cannot be parsed."""
-
 
 CLASS_KINDS = {5, 11, 23}  # Class, Struct, TypeParameter-ish fallback
 INTERFACE_KIND = 11
@@ -158,15 +154,18 @@ def parse_java_project(project_path: Path, prefer_lsp: bool = True) -> list[Java
 
     """
 
-    # TODO: Refactor. Make sure jdtls is available, otherwise, the parser would not get the correct & complete LSP service.
+    # JDTLS must be fully initialized before LSP queries return correct results.
+    # If jdtls is missing or crashes, we fall back to the static parser so that
+    # scan and plan remain usable in lightweight environments.
 
     project_path = project_path.resolve()
     if prefer_lsp and get_language_config(Language.JAVA).find_server_command():
         try:
-            classes: list[JavaClass] = _run_async(_analyze_with_lsp(project_path))
+            classes: list[JavaClass] = run_async(_analyze_with_lsp(project_path))
 
-            # TODO: But why do we still need the static parser here? Since we have already called the LSP.
-            # I suppose we should treat LSP as 1st class citizen, like the installed (by pip or other tools) dependencies.
+            # The static parser runs as a completeness check: LSP may return partial
+            # results if jdtls hasn't finished indexing.  If the LSP result covers at
+            # least as many classes/fields, we trust it; otherwise we fall back.
             static_classes: list[JavaClass] = parse_java_project_static(project_path)
             if _is_lsp_result_complete_enough(classes, static_classes):
                 return classes
@@ -192,12 +191,18 @@ def parse_java_project_static(project_path: Path) -> list[JavaClass]:
     return classes
 
 
-# TODO: I suppose we should have a in-disk version of this function.
-# Otherwise, none of the files will be changed even the agent proposed a patch.
 def parse_java_project_static_with_overrides(
     project_path: Path, file_overrides: dict[Path, str]
 ) -> list[JavaClass]:
-    """Parse a project using in-memory content for selected files."""
+    """Parse a project using in-memory content for selected files.
+
+    Used by the execution engine for post-validation: after applying patches
+    in-memory, this re-parses the project with the modified file contents so
+    that rule validators can check the would-be result before committing.
+
+    For on-disk modifications, use ``parse_java_project_static()`` after the
+    execution engine has committed the patches via ``_commit()``.
+    """
 
     project_path = project_path.resolve()
     normalized = {path.resolve(): content for path, content in file_overrides.items()}
@@ -275,9 +280,8 @@ async def _analyze_with_lsp(project_path: Path) -> list[JavaClass]:
 
 
 def _symbol_to_java_class(file_path: Path, class_symbol_info: LspSymbolInfo) -> JavaClass | None:
-    # TODO: Why do we still need to read the content of the .java file since we have already had the symbol information?
-    # Is it because we need to manipulate the source code?
-
+    # We read the source file because documentSymbol does not provide package/imports,
+    # which are needed for FQN construction and type resolution in GraphBuilder.
     text = file_path.read_text(encoding="utf-8")
     cls = JavaClass(
         name=class_symbol_info.name,
@@ -456,9 +460,10 @@ def _is_lsp_result_complete_enough(
 
 
 def _is_dto(cls: JavaClass) -> bool:
-    # TODO: Refactor. Normally, for service classes, they also do not have static or main methods.
-    # And for DTO classes, there can also be static methods.
-    # Thus, we can only identify dto-like classes.
+    # Heuristic: a class with no static methods and no main() is likely a DTO/POJO.
+    # This is intentionally conservative — service classes may also lack static methods,
+    # and DTO classes may have static factory methods.  The result is "dto-like", not
+    # a guarantee.
     upper = cls.name.upper()
     markers = {"DTO", "VO", "BO", "PO", "QO", "MODEL", "ENTITY", "REQUEST", "RESPONSE"}
     if any(marker in upper for marker in markers):
@@ -574,19 +579,3 @@ def _remove_string_literals(text: str) -> str:
     text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
     text = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
     return text
-
-
-T = TypeVar("T")
-def _run_async(coro: Coroutine[Any, Any, T]) -> T:
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)  # type: ignore[arg-type]
-
-    if loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    return loop.run_until_complete(coro)
-    # TODO: Fix above 2 warnings of incorrect type.

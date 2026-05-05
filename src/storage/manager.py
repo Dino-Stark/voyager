@@ -91,22 +91,19 @@ class StorageManager:
     def load_pending_plan(self) -> dict | None:
         """
         Load the pending operation plan, if present.
+
+        The plan is persisted to disk so that ``voyager plan`` and ``voyager apply``
+        can be invoked as separate CLI commands (different process lifetimes).
         """
-        # TODO: But why do we put a plan into a file?
-        # Normally, a operation plan is a temporary state, in-memory is enough.
         plan_path = self.voyager_dir / PENDING_PLAN_FILE
         if not plan_path.exists():
             return None
         return json.loads(plan_path.read_text(encoding="utf-8"))
-        # TODO: Why don't we create a file named "constants.py", with utf-8 defined inside.
 
     def save_pending_plan(self, operation) -> Path:
         """
         Persist an operation plan for a later apply step.
         """
-
-        # TODO: According to the above TODO, I don't think we need this method either.
-
         plan_path = self.voyager_dir / PENDING_PLAN_FILE
         data = operation.model_dump(mode="json") if hasattr(operation, "model_dump") else operation
         plan_path.write_text(
@@ -114,8 +111,6 @@ class StorageManager:
             encoding="utf-8",
         )
         return plan_path
-
-    # TODO: OK, now we need to refactor all plan related methods.
 
     def clear_pending_plan(self) -> None:
         """

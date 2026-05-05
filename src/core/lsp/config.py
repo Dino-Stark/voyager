@@ -25,11 +25,12 @@ class Language(str, Enum):
     """
 
     JAVA = "java"
-    # TODO: Python = "python"    # pyright-langserver --stdio
-    # TODO: TYPESCRIPT = "typescript"  # typescript-language-server --stdio
-    # TODO: CSHARP = "csharp"    # OmniSharp
-    # TODO: GO = "go"            # gopls
-    # TODO: CPP = "cpp"          # clangd
+    # Planned language support:
+    # Python = "python"      # pyright-langserver --stdio
+    # TYPESCRIPT = "typescript"  # typescript-language-server --stdio
+    # CSHARP = "csharp"      # OmniSharp
+    # GO = "go"              # gopls
+    # CPP = "cpp"            # clangd
 
 
 @dataclass

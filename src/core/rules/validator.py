@@ -77,8 +77,8 @@ class RuleValidator:
     def validate_pre(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
         violations: list[dict] = []
 
-        # TODO: I suppose all these "kinds" can be replaced with static strings.
-        # TODO: And I suppose we can use strategy pattern here to support various operations.
+        # NOTE: Each operation type is handled by isinstance checks.  A strategy/multi-method
+        # pattern would scale better when adding rename_class, rename_method, etc.
 
         if isinstance(operation, RenameFieldOperation):
             field = graph.resolve_field(operation.class_name, operation.field_name)
@@ -257,7 +257,8 @@ class RuleValidator:
         return violations
 
 
-# TODO: Why don't we use a strong type here?
+# _violation returns a plain dict rather than a typed model because violations are
+# serialized directly into ApplyResult.errors (list[dict]) for JSON output flexibility.
 def _violation(
     kind: str,
     message: str,

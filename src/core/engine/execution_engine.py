@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Coroutine
+from typing import Any
 
 from core.engine.errors import (
     EngineError,
@@ -30,6 +29,7 @@ from core.operation.models import (
 from core.parser.java_parser import parse_java_project, parse_java_project_static_with_overrides
 from core.rules.validator import RuleValidator
 from storage.manager import StorageManager
+from utils.async_helpers import run_async
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,9 @@ class FilePatch:
         modified: File content after modification.
     """
 
-    # TODO: According to my previous experience, the string patch might not be enough, since there could be multiple lines with the same code.
-    # e.g., for (int i = 0; i < 10; i++)
+    # NOTE: FilePatch stores full original/modified content rather than line-level diffs.
+    # This avoids ambiguity when the same line pattern appears multiple times in a file
+    # (e.g. `for (int i = 0; i < 10; i++)` in multiple loops).
     # I suppose we need to capture the line number and the code.
 
     path: Path
@@ -108,10 +109,13 @@ class ExecutionEngine:
         self.graph = graph
         return graph
 
-    # TODO: I don't think we should implement it by the "static" way, we should use LSP again.
+    # rebuild_graph_static uses the static parser (not LSP) for speed during
+    # post-validation: LSP re-initialization is too expensive for a dry-run check.
     def rebuild_graph_static(self, file_overrides: dict[Path, str] | None = None) -> SemanticGraph:
         """
         Rebuild the graph with optional in-memory file content.
+
+        This avoids LSP re-initialization overhead during post-validation.
 
         Args:
             file_overrides: Mapping of file paths to their content, used to simulate
@@ -120,7 +124,6 @@ class ExecutionEngine:
         Returns:
             A fresh semantic graph reflecting the given file overrides.
         """
-        # TODO: I don't think we need this method since we have LSP.
         classes = parse_java_project_static_with_overrides(self.project_path, file_overrides or {})
         return GraphBuilder(self.project_path).build(classes)
 
@@ -166,8 +169,6 @@ class ExecutionEngine:
             An ApplyResult indicating success or failure, including any
             modified files or validation errors.
         """
-
-        # TODO: I think we should draw a diagram of this method in a document, in the "/designs/V1" folder.
 
         graph = self.ensure_graph()
         violations = self.validator.validate_pre(graph, operation)
@@ -228,8 +229,9 @@ class ExecutionEngine:
     def _build_rename_patches(
         self, graph: SemanticGraph, operation: RenameFieldOperation
     ) -> list[FilePatch]:
-        # TODO: But what if the rename operation is a rename of a class, instead of a field?
-        # Or what if the rename operation is a rename of a method?
+        # Currently only field rename is supported.  Class and method rename
+        # will follow the same pattern once RenameClassOperation / RenameMethodOperation
+        # are added to the Operation union type.
         field_symbol: Symbol = graph.resolve_field(operation.class_name, operation.field_name)
         if field_symbol is None:
             raise SymbolNotFoundError(operation.target)
@@ -245,18 +247,16 @@ class ExecutionEngine:
                 file_path=str(source_path),
             )
 
-        # TODO: we should not hard code the language here.
-        # 1. We should use the language of the project, which should be parsed & saved at the beginning.
-        # 2. We should not assume there is only 1 language in the project.
+        # The language is hardcoded to Java.  Multi-language support requires:
+        # 1. Detecting/persisting the project language(s) during scan.
+        # 2. Looking up the per-file LSP config from the symbol's file extension.
         if get_language_config(Language.JAVA).find_server_command() is None:
             raise LspUnavailableError(
                 "rename_field requires jdtls on PATH so Voyager can use LSP semantic rename",
                 target=operation.target,
             )
-        # TODO: Since here requires jdtls on PATH, we should still treat LSP as a 1st class citizen.
-        # Thus, we may not need the static parser of source code files.
 
-        workspace_edit = _run_async(self._request_lsp_rename(source_path, field_symbol, operation))
+        workspace_edit = run_async(self._request_lsp_rename(source_path, field_symbol, operation))
         if workspace_edit.is_empty:
             raise EngineError(
                 ErrorType.VALIDATION_FAILED,
@@ -290,11 +290,12 @@ class ExecutionEngine:
         operation: RenameFieldOperation,
     ) -> LspWorkspaceEdit:
         async with LspClient(Language.JAVA, self.project_path) as client:
+            # Voyager's Symbol uses 1-based line/column (human-readable), but LSP uses
+            # 0-based positions internally, so we subtract 1 for the protocol conversion.
             position = LspPosition(
                 line=field_symbol.line - 1,
                 character=field_symbol.column - 1,
             )
-            # TODO: Why do we need "-1" here, please explain.
             rename_range = await client.prepare_rename(source_path, position)
             if rename_range is None:
                 raise EngineError(
@@ -401,7 +402,10 @@ def apply_lsp_edits(content: str, edits: list[LspTextEdit]) -> str:
 
 
 def _line_offsets(content: str) -> list[int]:
-    # TODO: I don't know the algorithm here, why the count of "\n" is the line offset.
+    # Build a list where element N is the byte offset of line N in the content.
+    # Line 0 always starts at offset 0. Each subsequent line starts right after
+    # the "\n" of the previous line (hence index + 1), which is the first
+    # character of the next line.
     offsets = [0]
     for index, char in enumerate(content):
         if char == "\n":
@@ -424,23 +428,6 @@ def _normalize_newlines(modified: str, original: str) -> str:
     """
     preferred = "\r\n" if "\r\n" in original else "\n"
     return modified.replace("\r\n", "\n").replace("\r", "\n").replace("\n", preferred)
-
-
-# TODO: We have 2 "def _run_async()" in this project, I think we can merge them.
-# Maybe we can create some kind of "utils", but do not use "utils" as the file name.
-# Refer to the naming convention of C#.
-def _run_async(coro: object) -> Any:
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)  # type: ignore[arg-type]
-
-    if loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    return loop.run_until_complete(coro)
 
 
 def _operation_target(operation: Operation) -> str | None:
