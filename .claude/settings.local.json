@@ -13,7 +13,10 @@
       "Bash(python -m py_compile src/core/operation/models.py)",
       "Bash(python -m py_compile src/core/graph/semantic_graph.py)",
       "Bash(python -m py_compile src/core/engine/execution_engine.py)",
-      "Bash(python -m py_compile src/core/parser/java_parser.py)"
+      "Bash(python -m py_compile src/core/parser/java_parser.py)",
+      "Bash(pip show *)",
+      "Bash(python -c \"import voyager_cmd; print\\(voyager_cmd.__file__\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }
