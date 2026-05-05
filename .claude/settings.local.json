@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(voyager scan *)",
+      "Bash(python -m json.tool)",
+      "Bash(voyager plan *)",
+      "Bash(voyager apply *)",
+      "Bash(python examples/reset.py shop-dto)",
+      "Bash(rm -rf examples/shop-dto/src examples/shop-dto/pom.xml)",
+      "Bash(cp -r examples/_sources/shop-dto/* examples/shop-dto/)"
+    ]
+  }
+}
