@@ -123,4 +123,31 @@ def status(ctx: click.Context) -> None:
 
 
 if __name__ == "__main__":
-    cli()
+    # ── IDE / script mode: edit the values below and run directly ──────────
+    from voyager_cmd.runner import VoyagerRunner
+
+    PROJECT = r"examples\shop-dto"
+    # OPERATION: "rename" | "add_field" | "remove_field"
+    OPERATION = "rename"
+    TARGET = "OrderDTO.userId"
+    VALUE = "customerId"
+
+    runner = VoyagerRunner(PROJECT)
+
+    if OPERATION == "rename":
+        runner.run_rename(TARGET, VALUE)
+    elif OPERATION in ("add_field", "remove_field"):
+        runner.scan()
+        from core.operation.models import AddFieldOperation, RemoveFieldOperation
+
+        if OPERATION == "add_field":
+            op = AddFieldOperation(target=TARGET.split(".", 1)[0], field_name=VALUE)
+        else:
+            parts = TARGET.split(".", 1)
+            op = RemoveFieldOperation(target=parts[0], field_name=parts[1])
+        plan_result = runner.plan(op)
+        if plan_result.is_valid:
+            runner.apply(op)
+    else:
+        # Fallback: run the CLI
+        cli()
