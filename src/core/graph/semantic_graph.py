@@ -84,11 +84,12 @@ class Reference(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
 
+# TODO: I am not sure how to force the agents to use this class, instead of the grep command.
 class SemanticGraph(BaseModel):
     """
     Minimal V1 code graph.
 
-    The graph is the the "weak PSI layer" described in the design docs: it turns LSP
+    The graph is the "weak PSI layer" described in the design docs: it turns LSP
     coordinates and parser facts into stable objects that operations can target.
     It provides in-memory lookup indexes for fast symbol and reference resolution.
 
@@ -110,6 +111,8 @@ class SemanticGraph(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.build_index()
 
+    # TODO: We need another method to refresh the indexes after applying patches / adding files / deleting files.
+    # This is needed for incremental updates.
     def build_index(self) -> None:
         """
         Build in-memory lookup indexes.
@@ -119,6 +122,9 @@ class SemanticGraph(BaseModel):
         for symbol in self.symbols:
             simple_index.setdefault((symbol.type, symbol.name), []).append(symbol)
         self._simple_index = simple_index
+        # TODO: What does "_simple_index" mean? It feels like the index of simple names.
+        # But there could be multiple symbols with the same simple name.
+        # For example, there can be multiple classes with the same field name, e.g., "userId".
 
     def get_symbol(self, symbol_id: str) -> Symbol | None:
         return self._symbol_index.get(symbol_id)

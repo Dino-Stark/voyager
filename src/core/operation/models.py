@@ -27,6 +27,11 @@ class OperationType(str, Enum):
     ADD_FUNCTION = "add_function"
     UPDATE_FUNCTION_SIGNATURE = "update_function_signature"
 
+    # Add more types.
+    # ADD_FILE
+    # REMOVE_FILE
+    # RENAME_FILE
+
 
 class RenameFieldOperation(BaseModel):
     """

@@ -17,6 +17,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Coroutine, Any, TypeVar
 
 from core.lsp.client import LspClient, LspSymbolInfo
 from core.lsp.config import Language, get_language_config
@@ -162,8 +163,11 @@ def parse_java_project(project_path: Path, prefer_lsp: bool = True) -> list[Java
     project_path = project_path.resolve()
     if prefer_lsp and get_language_config(Language.JAVA).find_server_command():
         try:
-            classes = _run_async(_analyze_with_lsp(project_path))
-            static_classes = parse_java_project_static(project_path)
+            classes: list[JavaClass] = _run_async(_analyze_with_lsp(project_path))
+
+            # TODO: But why do we still need the static parser here? Since we have already called the LSP.
+            # I suppose we should treat LSP as 1st class citizen, like the installed (by pip or other tools) dependencies.
+            static_classes: list[JavaClass] = parse_java_project_static(project_path)
             if _is_lsp_result_complete_enough(classes, static_classes):
                 return classes
             logger.warning("LSP Java analysis was incomplete, falling back to static parser")
@@ -188,6 +192,8 @@ def parse_java_project_static(project_path: Path) -> list[JavaClass]:
     return classes
 
 
+# TODO: I suppose we should have a in-disk version of this function.
+# Otherwise, none of the files will be changed even the agent proposed a patch.
 def parse_java_project_static_with_overrides(
     project_path: Path, file_overrides: dict[Path, str]
 ) -> list[JavaClass]:
@@ -570,7 +576,8 @@ def _remove_string_literals(text: str) -> str:
     return text
 
 
-def _run_async(coro: object) -> object:
+T = TypeVar("T")
+def _run_async(coro: Coroutine[Any, Any, T]) -> T:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

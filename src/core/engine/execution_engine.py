@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Coroutine
 
 from core.engine.errors import (
     EngineError,
@@ -16,8 +16,8 @@ from core.engine.errors import (
     UnsupportedOperationError,
 )
 from core.graph.builder import GraphBuilder
-from core.graph.semantic_graph import SemanticGraph
-from core.lsp.client import LspClient, LspPosition, LspTextEdit, uri_to_path
+from core.graph.semantic_graph import SemanticGraph, Symbol
+from core.lsp.client import LspClient, LspPosition, LspTextEdit, uri_to_path, LspWorkspaceEdit
 from core.lsp.config import Language, get_language_config
 from core.operation.models import (
     AddFieldOperation,
@@ -47,6 +47,10 @@ class FilePatch:
         original: File content before modification.
         modified: File content after modification.
     """
+
+    # TODO: According to my previous experience, the string patch might not be enough, since there could be multiple lines with the same code.
+    # e.g., for (int i = 0; i < 10; i++)
+    # I suppose we need to capture the line number and the code.
 
     path: Path
     original: str
@@ -104,6 +108,7 @@ class ExecutionEngine:
         self.graph = graph
         return graph
 
+    # TODO: I don't think we should implement it by the "static" way, we should use LSP again.
     def rebuild_graph_static(self, file_overrides: dict[Path, str] | None = None) -> SemanticGraph:
         """
         Rebuild the graph with optional in-memory file content.
@@ -115,6 +120,7 @@ class ExecutionEngine:
         Returns:
             A fresh semantic graph reflecting the given file overrides.
         """
+        # TODO: I don't think we need this method since we have LSP.
         classes = parse_java_project_static_with_overrides(self.project_path, file_overrides or {})
         return GraphBuilder(self.project_path).build(classes)
 
@@ -160,6 +166,9 @@ class ExecutionEngine:
             An ApplyResult indicating success or failure, including any
             modified files or validation errors.
         """
+
+        # TODO: I think we should draw a diagram of this method in a document, in the "/designs/V1" folder.
+
         graph = self.ensure_graph()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
@@ -219,11 +228,13 @@ class ExecutionEngine:
     def _build_rename_patches(
         self, graph: SemanticGraph, operation: RenameFieldOperation
     ) -> list[FilePatch]:
-        field_symbol = graph.resolve_field(operation.class_name, operation.field_name)
+        # TODO: But what if the rename operation is a rename of a class, instead of a field?
+        # Or what if the rename operation is a rename of a method?
+        field_symbol: Symbol = graph.resolve_field(operation.class_name, operation.field_name)
         if field_symbol is None:
             raise SymbolNotFoundError(operation.target)
 
-        source_path = self._project_file_path(field_symbol.file_path)
+        source_path: Path = self._project_file_path(field_symbol.file_path)
         if not source_path.exists():
             raise SymbolNotFoundError(operation.target, file_path=str(source_path))
         if field_symbol.line <= 0 or field_symbol.column <= 0:
@@ -234,11 +245,16 @@ class ExecutionEngine:
                 file_path=str(source_path),
             )
 
+        # TODO: we should not hard code the language here.
+        # 1. We should use the language of the project, which should be parsed & saved at the beginning.
+        # 2. We should not assume there is only 1 language in the project.
         if get_language_config(Language.JAVA).find_server_command() is None:
             raise LspUnavailableError(
                 "rename_field requires jdtls on PATH so Voyager can use LSP semantic rename",
                 target=operation.target,
             )
+        # TODO: Since here requires jdtls on PATH, we should still treat LSP as a 1st class citizen.
+        # Thus, we may not need the static parser of source code files.
 
         workspace_edit = _run_async(self._request_lsp_rename(source_path, field_symbol, operation))
         if workspace_edit.is_empty:
@@ -272,12 +288,13 @@ class ExecutionEngine:
         source_path: Path,
         field_symbol: Any,
         operation: RenameFieldOperation,
-    ):
+    ) -> LspWorkspaceEdit:
         async with LspClient(Language.JAVA, self.project_path) as client:
             position = LspPosition(
                 line=field_symbol.line - 1,
                 character=field_symbol.column - 1,
             )
+            # TODO: Why do we need "-1" here, please explain.
             rename_range = await client.prepare_rename(source_path, position)
             if rename_range is None:
                 raise EngineError(
@@ -299,7 +316,7 @@ class ExecutionEngine:
         return []
 
     def _project_file_path(self, file_path: str) -> Path:
-        path = Path(file_path)
+        path: Path = Path(file_path)
         if path.is_absolute():
             return path.resolve()
         return (self.project_path / path).resolve()
@@ -384,6 +401,7 @@ def apply_lsp_edits(content: str, edits: list[LspTextEdit]) -> str:
 
 
 def _line_offsets(content: str) -> list[int]:
+    # TODO: I don't know the algorithm here, why the count of "\n" is the line offset.
     offsets = [0]
     for index, char in enumerate(content):
         if char == "\n":
@@ -408,6 +426,9 @@ def _normalize_newlines(modified: str, original: str) -> str:
     return modified.replace("\r\n", "\n").replace("\r", "\n").replace("\n", preferred)
 
 
+# TODO: We have 2 "def _run_async()" in this project, I think we can merge them.
+# Maybe we can create some kind of "utils", but do not use "utils" as the file name.
+# Refer to the naming convention of C#.
 def _run_async(coro: object) -> Any:
     try:
         loop = asyncio.get_running_loop()
