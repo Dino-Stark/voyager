@@ -104,6 +104,7 @@ class SemanticGraph(BaseModel):
     project_path: str = ""
     symbols: list[Symbol] = Field(default_factory=list)
     references: list[Reference] = Field(default_factory=list)
+    # TODO: It feels like the "references" of a field is equivalent to the search results of a symbol in IDEA.
 
     _symbol_index: dict[str, Symbol] = PrivateAttr(default_factory=dict)
     _simple_index: dict[tuple[SymbolType, str], list[Symbol]] = PrivateAttr(default_factory=dict)
