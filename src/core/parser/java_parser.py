@@ -104,6 +104,7 @@ class JavaClass:
         return f"{self.package}.{self.name}" if self.package else self.name
 
 
+# TODO: Maybe we should use this class somewhere.
 class JavaParseException(Exception):
     """Raised when Java source cannot be parsed."""
 
@@ -141,12 +142,22 @@ _COMMENT_LINE_RE = re.compile(r"^\s*(//|\*)")
 
 
 def parse_java_project(project_path: Path, prefer_lsp: bool = True) -> list[JavaClass]:
-    """Parse all Java files under ``project_path``.
+    """
+    Parse all Java files under ``project_path``.
 
     LSP is attempted first when available.  If jdtls is not installed or fails
     to initialize, Voyager falls back to the static parser so scan and plan stay
     useful in lightweight environments.
+
+    Args:
+        project_path: Root path of the project.
+        prefer_lsp: Always ``true``, will be removed later.
+
+    Returns: A list of parsed Java classes.
+
     """
+
+    # TODO: Refactor. Make sure jdtls is available, otherwise, the parser would not get the correct & complete LSP service.
 
     project_path = project_path.resolve()
     if prefer_lsp and get_language_config(Language.JAVA).find_server_command():
@@ -248,7 +259,7 @@ async def _analyze_with_lsp(project_path: Path) -> list[JavaClass]:
         ]
         classes: list[JavaClass] = []
         for file_path in java_files:
-            symbols = await client.get_symbols(file_path)
+            symbols: list[LspSymbolInfo] = await client.get_symbols(file_path)
             for symbol in symbols:
                 if _is_type_symbol(symbol):
                     cls = _symbol_to_java_class(file_path, symbol)
@@ -257,18 +268,21 @@ async def _analyze_with_lsp(project_path: Path) -> list[JavaClass]:
         return classes
 
 
-def _symbol_to_java_class(file_path: Path, class_sym: LspSymbolInfo) -> JavaClass | None:
+def _symbol_to_java_class(file_path: Path, class_symbol_info: LspSymbolInfo) -> JavaClass | None:
+    # TODO: Why do we still need to read the content of the .java file since we have already had the symbol information?
+    # Is it because we need to manipulate the source code?
+
     text = file_path.read_text(encoding="utf-8")
     cls = JavaClass(
-        name=class_sym.name,
+        name=class_symbol_info.name,
         file_path=file_path.resolve(),
         package=_parse_package(text),
         imports=_parse_imports(text),
-        line=class_sym.selection_range.start.line + 1 if class_sym.selection_range else 0,
-        column=class_sym.selection_range.start.character + 1 if class_sym.selection_range else 0,
+        line=class_symbol_info.selection_range.start.line + 1 if class_symbol_info.selection_range else 0,
+        column=class_symbol_info.selection_range.start.character + 1 if class_symbol_info.selection_range else 0,
     )
 
-    for child in class_sym.children:
+    for child in class_symbol_info.children:
         if child.kind in {FIELD_KIND, PROPERTY_KIND}:
             type_name = _clean_lsp_detail(child.detail) or _infer_field_type_from_line(
                 text, child.selection_range.start.line + 1 if child.selection_range else 0, child.name
@@ -436,6 +450,9 @@ def _is_lsp_result_complete_enough(
 
 
 def _is_dto(cls: JavaClass) -> bool:
+    # TODO: Refactor. Normally, for service classes, they also do not have static or main methods.
+    # And for DTO classes, there can also be static methods.
+    # Thus, we can only identify dto-like classes.
     upper = cls.name.upper()
     markers = {"DTO", "VO", "BO", "PO", "QO", "MODEL", "ENTITY", "REQUEST", "RESPONSE"}
     if any(marker in upper for marker in markers):
@@ -565,3 +582,4 @@ def _run_async(coro: object) -> object:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
     return loop.run_until_complete(coro)
+    # TODO: Fix above 2 warnings of incorrect type.
