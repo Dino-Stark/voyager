@@ -10,13 +10,10 @@ extracts simple structure and explicit references; it does not guess dynamic
 behavior.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from core.lsp.client import LspClient, LspSymbolInfo
 from core.lsp.config import Language, get_language_config

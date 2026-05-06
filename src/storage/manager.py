@@ -6,8 +6,6 @@ Manages the .voyager directory for persistent state:
 - rules.yaml: project rules
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import datetime, timezone

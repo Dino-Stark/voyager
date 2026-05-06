@@ -1,7 +1,5 @@
 """Semantic graph models for the Agent-friendly operation layer."""
 
-from __future__ import annotations
-
 from enum import Enum
 from typing import Any
 

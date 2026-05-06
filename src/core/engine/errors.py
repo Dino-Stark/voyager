@@ -4,8 +4,6 @@ Structured error definitions for the execution engine.
 All errors are recoverable and carry sufficient context for debugging.
 """
 
-from __future__ import annotations
-
 from enum import Enum
 
 

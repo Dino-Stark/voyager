@@ -1,7 +1,5 @@
 """Apply command: execute the pending planned operation."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from rich.console import Console

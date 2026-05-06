@@ -11,8 +11,6 @@ Usage::
     runner.run_rename("OrderDTO.userId", "customerId")
 """
 
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 

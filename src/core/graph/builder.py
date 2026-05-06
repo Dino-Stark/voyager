@@ -1,7 +1,5 @@
 """Build Voyager's semantic graph from parsed Java classes."""
 
-from __future__ import annotations
-
 import logging
 import re
 from pathlib import Path

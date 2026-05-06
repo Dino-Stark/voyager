@@ -1,7 +1,5 @@
 """Plan command: plan an operation and compute affected files."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from rich.console import Console

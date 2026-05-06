@@ -10,8 +10,6 @@ Usage:
     python -m scripts.setup_jdtls --check  # Check if installed
 """
 
-from __future__ import annotations
-
 import argparse
 import shutil
 import stat

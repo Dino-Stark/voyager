@@ -4,8 +4,6 @@ The client is intentionally thin.  It exposes LSP as a source of facts and
 edits; transactionality and validation live in the execution engine.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging

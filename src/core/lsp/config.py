@@ -4,8 +4,6 @@ Defines how to launch and initialize each supported language server.
 New languages can be added here with their server command and init params.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import sys

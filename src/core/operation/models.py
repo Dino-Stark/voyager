@@ -4,8 +4,6 @@ Defines the structured operation specifications for semantic code modifications.
 Each operation targets a semantic entity (not raw text) and is verifiable + reversible.
 """
 
-from __future__ import annotations
-
 from enum import Enum
 from typing import Literal
 
@@ -53,7 +51,7 @@ class RenameFieldOperation(BaseModel):
     to: str = Field(description="New field name")
 
     @model_validator(mode="after")
-    def validate_target_format(self) -> RenameFieldOperation:
+    def validate_target_format(self) -> "RenameFieldOperation":
         parts = self.target.split(".", 1)
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(
@@ -62,7 +60,7 @@ class RenameFieldOperation(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_new_name(self) -> RenameFieldOperation:
+    def validate_new_name(self) -> "RenameFieldOperation":
         if not self.to.isidentifier():
             raise ValueError(f"New field name must be a valid identifier, got: '{self.to}'")
         return self
@@ -75,7 +73,7 @@ class RenameFieldOperation(BaseModel):
     def field_name(self) -> str:
         return self.target.split(".", 1)[1]
 
-    def reverse(self) -> RenameFieldOperation:
+    def reverse(self) -> "RenameFieldOperation":
         """
         Return the inverse operation for rollback.
         """
@@ -104,7 +102,7 @@ class AddFieldOperation(BaseModel):
     default_value: str | None = None
 
     @model_validator(mode="after")
-    def validate_field_name(self) -> AddFieldOperation:
+    def validate_field_name(self) -> "AddFieldOperation":
         if not self.field_name.isidentifier():
             raise ValueError(f"Field name must be a valid identifier, got: '{self.field_name}'")
         return self
@@ -113,7 +111,7 @@ class AddFieldOperation(BaseModel):
     def class_name(self) -> str:
         return self.target
 
-    def reverse(self) -> RemoveFieldOperation:
+    def reverse(self) -> "RemoveFieldOperation":
         """
         Return the inverse operation for rollback.
         """
@@ -137,7 +135,7 @@ class RemoveFieldOperation(BaseModel):
     field_name: str
 
     @model_validator(mode="after")
-    def validate_field_name(self) -> RemoveFieldOperation:
+    def validate_field_name(self) -> "RemoveFieldOperation":
         if not self.field_name.isidentifier():
             raise ValueError(f"Field name must be a valid identifier, got: '{self.field_name}'")
         return self

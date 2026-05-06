@@ -7,8 +7,6 @@ Usage:
     Otherwise, reset all projects found in _sources/.
 """
 
-from __future__ import annotations
-
 import shutil
 import sys
 from pathlib import Path

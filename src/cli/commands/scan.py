@@ -1,7 +1,5 @@
 """Scan command: parse Java project and build semantic graph."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 
