@@ -84,6 +84,12 @@ def get_language_config(language: Language) -> LanguageConfig:
                         "maven": {"downloadSources": False},
                         "autobuild": {"enabled": False},
                         "format": {"enabled": False},
+                        "diagnostics": {"enabled": False},
+                        "trace": {"server": "off"},
+                        "import": {
+                            "maven": {"enabled": False},
+                            "gradle": {"enabled": False},
+                        },
                     }
                 }
             },

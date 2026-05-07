@@ -1,0 +1,955 @@
+{
+  "project_path": "D:\\DinoStark\\Projects\\PyCharm\\voyager",
+  "symbols": [
+    {
+      "id": "com.shop.OrderDTO",
+      "type": "class",
+      "name": "OrderDTO",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.orderId",
+      "type": "field",
+      "name": "orderId",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 4,
+      "column": 20,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.totalPrice",
+      "type": "field",
+      "name": "totalPrice",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 5,
+      "column": 20,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "type_name": "double",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.getOrderId",
+      "type": "method",
+      "name": "getOrderId",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 7,
+      "column": 19,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.setOrderId",
+      "type": "method",
+      "name": "setOrderId",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 11,
+      "column": 17,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "orderId",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.getTotalPrice",
+      "type": "method",
+      "name": "getTotalPrice",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 15,
+      "column": 19,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "double",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.setTotalPrice",
+      "type": "method",
+      "name": "setTotalPrice",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 19,
+      "column": 17,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "totalPrice",
+            "type_name": "double"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService",
+      "type": "class",
+      "name": "OrderService",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.OrderService.buyer",
+      "type": "field",
+      "name": "buyer",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 4,
+      "column": 21,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "type_name": "UserDTO",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService.createOrder",
+      "type": "method",
+      "name": "createOrder",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "order",
+            "type_name": "OrderDTO"
+          },
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService.getBuyerName",
+      "type": "method",
+      "name": "getBuyerName",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 13,
+      "column": 19,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO",
+      "type": "class",
+      "name": "UserDTO",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.userName",
+      "type": "field",
+      "name": "userName",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 4,
+      "column": 20,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.email",
+      "type": "field",
+      "name": "email",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 5,
+      "column": 20,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.age",
+      "type": "field",
+      "name": "age",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 6,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "int",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getUserName",
+      "type": "method",
+      "name": "getUserName",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 8,
+      "column": 19,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setUserName",
+      "type": "method",
+      "name": "setUserName",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 12,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "userName",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getEmail",
+      "type": "method",
+      "name": "getEmail",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 16,
+      "column": 19,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setEmail",
+      "type": "method",
+      "name": "setEmail",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 20,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "email",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getAge",
+      "type": "method",
+      "name": "getAge",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 24,
+      "column": 16,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "int",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setAge",
+      "type": "method",
+      "name": "setAge",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 28,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "age",
+            "type_name": "int"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserService",
+      "type": "class",
+      "name": "UserService",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": false
+      }
+    },
+    {
+      "id": "com.shop.UserService.register",
+      "type": "method",
+      "name": "register",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 4,
+      "column": 17,
+      "parent_id": "com.shop.UserService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserService.printInfo",
+      "type": "method",
+      "name": "printInfo",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 10,
+      "column": 17,
+      "parent_id": "com.shop.UserService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO",
+      "type": "class",
+      "name": "OrderDTO",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.orderId",
+      "type": "field",
+      "name": "orderId",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 4,
+      "column": 20,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.totalPrice",
+      "type": "field",
+      "name": "totalPrice",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 5,
+      "column": 20,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "type_name": "double",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.getOrderId",
+      "type": "method",
+      "name": "getOrderId",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 7,
+      "column": 19,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.setOrderId",
+      "type": "method",
+      "name": "setOrderId",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 11,
+      "column": 17,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "orderId",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.getTotalPrice",
+      "type": "method",
+      "name": "getTotalPrice",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 15,
+      "column": 19,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "double",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderDTO.setTotalPrice",
+      "type": "method",
+      "name": "setTotalPrice",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderDTO.java",
+      "line": 19,
+      "column": 17,
+      "parent_id": "com.shop.OrderDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "totalPrice",
+            "type_name": "double"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService",
+      "type": "class",
+      "name": "OrderService",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.OrderService.buyer",
+      "type": "field",
+      "name": "buyer",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 4,
+      "column": 21,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "type_name": "UserDTO",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService.createOrder",
+      "type": "method",
+      "name": "createOrder",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "order",
+            "type_name": "OrderDTO"
+          },
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.OrderService.getBuyerName",
+      "type": "method",
+      "name": "getBuyerName",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 13,
+      "column": 19,
+      "parent_id": "com.shop.OrderService",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO",
+      "type": "class",
+      "name": "UserDTO",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": true
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.userName",
+      "type": "field",
+      "name": "userName",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 4,
+      "column": 20,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.email",
+      "type": "field",
+      "name": "email",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 5,
+      "column": 20,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "String",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.age",
+      "type": "field",
+      "name": "age",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 6,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "type_name": "int",
+        "modifiers": [
+          "private"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getUserName",
+      "type": "method",
+      "name": "getUserName",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 8,
+      "column": 19,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setUserName",
+      "type": "method",
+      "name": "setUserName",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 12,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "userName",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getEmail",
+      "type": "method",
+      "name": "getEmail",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 16,
+      "column": 19,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "String",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setEmail",
+      "type": "method",
+      "name": "setEmail",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 20,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "email",
+            "type_name": "String"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.getAge",
+      "type": "method",
+      "name": "getAge",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 24,
+      "column": 16,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "int",
+        "parameters": [],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserDTO.setAge",
+      "type": "method",
+      "name": "setAge",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserDTO.java",
+      "line": 28,
+      "column": 17,
+      "parent_id": "com.shop.UserDTO",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "age",
+            "type_name": "int"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserService",
+      "type": "class",
+      "name": "UserService",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 3,
+      "column": 14,
+      "parent_id": null,
+      "extra": {
+        "package": "com.shop",
+        "imports": [],
+        "is_dto": false
+      }
+    },
+    {
+      "id": "com.shop.UserService.register",
+      "type": "method",
+      "name": "register",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 4,
+      "column": 17,
+      "parent_id": "com.shop.UserService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    },
+    {
+      "id": "com.shop.UserService.printInfo",
+      "type": "method",
+      "name": "printInfo",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 10,
+      "column": 17,
+      "parent_id": "com.shop.UserService",
+      "extra": {
+        "return_type": "void",
+        "parameters": [
+          {
+            "name": "user",
+            "type_name": "UserDTO"
+          }
+        ],
+        "modifiers": [
+          "public"
+        ]
+      }
+    }
+  ],
+  "references": [
+    {
+      "from_symbol": "com.shop.OrderService",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "type_ref",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 4,
+      "column": 21,
+      "extra": {
+        "via": "buyer",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.OrderService.createOrder",
+      "to_symbol": "com.shop.OrderDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "extra": {
+        "parameter": "order",
+        "type_name": "OrderDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.OrderService.createOrder",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.UserService.register",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 4,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.UserService.printInfo",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/_sources/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 10,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.OrderService",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "type_ref",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 4,
+      "column": 21,
+      "extra": {
+        "via": "buyer",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.OrderService.createOrder",
+      "to_symbol": "com.shop.OrderDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "extra": {
+        "parameter": "order",
+        "type_name": "OrderDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.OrderService.createOrder",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/OrderService.java",
+      "line": 6,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.UserService.register",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 4,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    },
+    {
+      "from_symbol": "com.shop.UserService.printInfo",
+      "to_symbol": "com.shop.UserDTO",
+      "ref_type": "param_ref",
+      "file_path": "examples/shop-dto/src/main/java/com/shop/UserService.java",
+      "line": 10,
+      "column": 17,
+      "extra": {
+        "parameter": "user",
+        "type_name": "UserDTO"
+      }
+    }
+  ]
+}

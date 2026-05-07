@@ -304,9 +304,18 @@ def _symbol_to_java_class(file_path: Path, class_symbol_info: LspSymbolInfo) -> 
             )
         elif child.kind in {METHOD_KIND, CONSTRUCTOR_KIND}:
             return_type, params = _parse_method_detail(child.detail)
+            # jdtls hierarchical document symbols put the signature in the
+            # *name* field, e.g. "setOrderId(String)".  Try to extract
+            # parameters from the name when detail is empty or lacks them.
+            method_name = child.name
+            if "(" in child.name:
+                method_name, params_from_name = _parse_method_detail(child.name)
+                method_name = method_name or child.name.split("(")[0]
+                if params_from_name:
+                    params = params_from_name
             cls.methods.append(
                 JavaMethod(
-                    name=child.name,
+                    name=method_name,
                     return_type=return_type if child.kind != CONSTRUCTOR_KIND else cls.name,
                     parameters=params,
                     line=child.selection_range.start.line + 1 if child.selection_range else 0,
@@ -408,10 +417,13 @@ def _parse_parameters(params: str) -> list[JavaField]:
         if not raw:
             continue
         parts = raw.rsplit(None, 1)
-        if len(parts) != 2:
-            continue
-        type_name, name = parts
-        name = name.strip()
+        if len(parts) == 2:
+            type_name, name = parts
+            name = name.strip()
+        else:
+            # jdtls detail only contains types, no names (e.g. "String, int")
+            type_name = raw
+            name = ""
         if name.startswith("..."):
             name = name[3:]
         result.append(JavaField(name=name, type_name=_normalize_type(type_name)))
@@ -425,8 +437,15 @@ def _parse_method_detail(detail: str) -> tuple[str | None, list[JavaField]]:
 
     before, _, after = detail.partition("(")
     params_part = after.rsplit(")", 1)[0]
-    before_parts = before.strip().split()
-    return_type = _normalize_type(before_parts[0]) if before_parts else None
+    before = before.strip()
+
+    # jdtls detail can be either "returnType methodName(...)" or just "methodName(...)"
+    # The method name is always the last identifier before '('.
+    parts = before.rsplit(None, 1)
+    if len(parts) == 2:
+        return_type = _normalize_type(parts[0]) or None
+    else:
+        return_type = None
     return return_type, _parse_parameters(params_part)
 
 

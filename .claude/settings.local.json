@@ -16,7 +16,13 @@
       "Bash(python -m py_compile src/core/parser/java_parser.py)",
       "Bash(pip show *)",
       "Bash(python -c \"import voyager_cmd; print\\(voyager_cmd.__file__\\)\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -m py_compile src/core/parser/java_parser.py src/core/operation/models.py src/core/lsp/client.py src/core/graph/builder.py src/core/engine/execution_engine.py)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -c \"from core.operation.models import RemoveFieldOperation; print\\('OK'\\)\")",
+      "Bash(python -c \"from core.operation.models import RemoveFieldOperation; op = RemoveFieldOperation\\(target='UserDTO', field_name='name'\\); print\\(op.reverse\\(\\)\\)\")",
+      "Bash(python -c \"from core.lsp.client import LspClient; print\\('LspClient imported OK'\\)\")",
+      "Bash(python -m py_compile src/core/parser/java_parser.py src/core/operation/models.py src/core/lsp/client.py src/core/graph/builder.py src/core/engine/execution_engine.py src/core/graph/semantic_graph.py src/cli/commands/scan.py src/cli/commands/plan.py src/cli/commands/apply.py src/storage/manager.py src/utils/async_helpers.py src/voyager_cmd/main.py src/voyager_cmd/runner.py src/core/diff/diff_engine.py src/core/rules/validator.py src/core/engine/errors.py)"
     ]
   }
 }

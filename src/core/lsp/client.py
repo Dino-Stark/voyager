@@ -205,9 +205,11 @@ class LspClient:
         self._request_id = 0
         self._initialized = False
         self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._open_files: dict[str, int] = {}
         self._diagnostics_cache: dict[str, list[dict[str, Any]]] = {}
+        self._server_ready_event: asyncio.Event = asyncio.Event()
 
     async def __aenter__(self) -> "LspClient":
         await self.start()
@@ -246,6 +248,7 @@ class LspClient:
             env=env,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
+        self._stderr_task = asyncio.create_task(self._read_stderr_loop())
 
         await self._send_request(
             "initialize",
@@ -262,7 +265,10 @@ class LspClient:
                         "references": {"dynamicRegistration": False},
                         "implementation": {"dynamicRegistration": False},
                         "rename": {"prepareSupport": True},
-                        "documentSymbol": {"dynamicRegistration": False},
+                        "documentSymbol": {
+                            "dynamicRegistration": False,
+                            "hierarchicalDocumentSymbolSupport": True,
+                        },
                         "synchronization": {
                             "didOpen": True,
                             "didChange": True,
@@ -283,6 +289,12 @@ class LspClient:
             },
         )
         await self._send_notification("initialized", {})
+        # Wait for jdtls to signal it has finished internal setup (preference
+        # manager, classpath indexing, etc.) before we send the first didOpen.
+        try:
+            await asyncio.wait_for(self._server_ready_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("LSP server did not report ready within 10s, proceeding anyway")
         self._initialized = True
 
     async def shutdown(self) -> None:
@@ -301,17 +313,32 @@ class LspClient:
             logger.warning("LSP shutdown failed: %s", exc)
             if process.returncode is None:
                 process.kill()
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    pass
         finally:
             if self._reader_task is not None:
                 self._reader_task.cancel()
+                try:
+                    await self._reader_task
+                except asyncio.CancelledError:
+                    pass
+            if self._stderr_task is not None:
+                self._stderr_task.cancel()
+                try:
+                    await self._stderr_task
+                except asyncio.CancelledError:
+                    pass
             for future in self._pending.values():
                 if not future.done():
                     future.cancel()
             self._pending.clear()
             self._reader_task = None
+            self._stderr_task = None
             self._process = None
             self._initialized = False
+            self._server_ready_event.clear()
 
     def _jdtls_workspace_path(self) -> Path:
         """Return a JDT LS workspace outside the analyzed project tree."""
@@ -491,6 +518,22 @@ class LspClient:
         self._process.stdin.write(header + body)
         await self._process.stdin.drain()
 
+    async def _read_stderr_loop(self) -> None:
+        """Drain stderr so the server never blocks on a full buffer."""
+
+        if self._process is None or self._process.stderr is None:
+            return
+        while True:
+            try:
+                line = await self._process.stderr.readline()
+                if not line:
+                    return
+                logger.debug("LSP stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return
+
     async def _read_loop(self) -> None:
         while True:
             try:
@@ -550,6 +593,12 @@ class LspClient:
         params = message.get("params", {})
         if method == "textDocument/publishDiagnostics":
             self._diagnostics_cache[params.get("uri", "")] = params.get("diagnostics", [])
+        elif method == "language/status":
+            status_type = params.get("type", "")
+            status_msg = params.get("message", "")
+            logger.debug("LSP status: %s - %s", status_type, status_msg)
+            if status_type in ("Started", "Ready") or "Ready" in status_msg:
+                self._server_ready_event.set()
         elif method == "window/logMessage":
             msg = params.get("message", "")
             level = params.get("type", 3)
