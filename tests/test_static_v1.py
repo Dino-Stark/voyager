@@ -62,6 +62,30 @@ def test_static_parser_and_graph_find_dto_field_references(java_project: Path) -
     assert "src/main/java/com/acme/OrderService.java" in affected
 
 
+def test_plan_includes_java_bean_accessor_call_sites(java_project: Path) -> None:
+    service = java_project / "src/main/java/com/acme/OrderService.java"
+    service.write_text(
+        """package com.acme;
+
+public class OrderService {
+    public void create(OrderDTO order) {
+        String id = order.getUserId();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    graph = GraphBuilder(java_project).build(parse_java_project_static(java_project))
+
+    affected = graph.get_affected_files_for_field("OrderDTO", "userId")
+
+    assert affected == [
+        "src/main/java/com/acme/OrderDTO.java",
+        "src/main/java/com/acme/OrderService.java",
+    ]
+
+
 def test_plan_accepts_unambiguous_simple_class_name(java_project: Path) -> None:
     engine = ExecutionEngine(java_project)
     graph = GraphBuilder(java_project).build(parse_java_project_static(java_project))

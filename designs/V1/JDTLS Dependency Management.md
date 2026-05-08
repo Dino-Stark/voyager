@@ -1,238 +1,183 @@
-# JDTLS 依赖管理设计
+# JDT LS Dependency And Lifecycle
 
-> 本文档说明 Voyager 项目如何管理 JDT Language Server 依赖，实现跨平台、跨机器的可移植性。
+## Role In Voyager V1
 
----
+Voyager V1 uses Eclipse JDT Language Server for Java semantic operations.
 
-## 1. 背景与问题
+JDT LS is required for:
 
-### 1.1 原始方案的问题
+- `rename_field` apply,
+- `textDocument/prepareRename`,
+- `textDocument/rename`,
+- LSP-based `documentSymbol` scan when available.
 
-Voyager V1 依赖 Eclipse JDT Language Server 进行 Java 语义分析。最初方案将 JDTLS 安装在固定路径 `D:\Software\jdtls`，这导致：
+JDT LS is not required for every V1 behavior:
 
-| 问题 | 影响 |
-|------|------|
-| 硬编码绝对路径 | 换机器无法运行 |
-| 人工手动安装 | 新开发者需要手动配置 |
-| 路径不一致 | 团队成员路径可能不同 |
-| Git 仓库污染 | 不应提交二进制文件到仓库 |
-
-### 1.2 选择：下载脚本 vs 复制文件
-
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| **下载脚本** | 仓库小、可自动更新版本、支持跨平台 | 首次需要网络 |
-| 复制到 `scripts/` | 完全离线可用 | 仓库大 (~150MB)、平台固定 |
-
-**最终选择：下载脚本方案**，理由：
-1. Git 不适合管理大型二进制文件
-2. JDTLS 版本更新时可通过修改脚本 URL 统一升级
-3. 支持 Windows/macOS/Linux 自动检测
+- static parsing can still build a graph for simple projects,
+- `plan` can run from the saved/static graph,
+- but `apply rename_field` must fail safely if JDT LS is unavailable.
 
 ---
 
-## 2. 架构设计
+## Installation
 
-### 2.1 目录结构
+Voyager expects `jdtls` to be discoverable on `PATH`.
 
-```
-voyager/
-├── scripts/
-│   ├── jdtls.cmd           # Windows launcher (git 管理)
-│   ├── jdtls.sh            # Unix launcher (git 管理)
-│   ├── setup_jdtls.py      # 安装脚本 (git 管理)
-│   └── jdtls/              # 下载的 JDTLS (不提交到 git)
-│       ├── bin/
-│       │   └── jdtls       # JDTLS 可执行文件
-│       └── config_linux/   # 配置目录
-└── .gitignore              # 排除 scripts/jdtls/
-```
-
-### 2.2 组件职责
-
-| 组件 | 职责 |
-|------|------|
-| `setup_jdtls.py` | 下载、解压、配置 JDTLS |
-| `jdtls.cmd/.sh` | 平台特定的启动器，调用 `scripts/jdtls/bin/jdtls` |
-| `.gitignore` | 排除 `scripts/jdtls/` 目录 |
-
-### 2.3 启动流程
-
-```
-用户运行 jdtls.cmd
-    ↓
-jdtls.cmd 设置 JDTLS_BIN 路径
-    ↓
-调用 python "scripts/jdtls/bin/jdtls"
-    ↓
-JDTLS 启动并与 Voyager 通信
-```
-
----
-
-## 3. 实现细节
-
-### 3.1 平台检测
-
-```python
-def get_system_info() -> tuple[str, str]:
-    """自动检测操作系统和架构"""
-    import platform
-
-    os_map = {
-        "windows": "windows",
-        "darwin": "darwin",
-        "linux": "linux",
-    }
-    arch_map = {
-        "amd64": "x64",
-        "x86_64": "x64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }
-
-    os_key = os_map[platform.system().lower()]
-    arch_key = arch_map[platform.machine().lower()]
-    return os_key, arch_key
-```
-
-### 3.2 版本管理
-
-JDTLS 版本号定义在脚本常量中：
-
-```python
-JDTLS_VERSION = "1.38.0"
-DOWNLOAD_BASE = "https://download.eclipse.org/jdtls/milestones/1.38.0"
-```
-
-更新 JDTLS 版本只需修改这两个常量。
-
-### 3.3 安装状态追踪
-
-使用 `.voyager_installed` marker 文件记录安装信息：
-
-```
-version=1.38.0
-platform=windows/x64
-```
-
-这允许：
-- 快速检查是否已安装
-- 验证版本是否需要更新
-- 诊断安装问题
-
-### 3.4 错误处理
-
-| 场景 | 处理方式 |
-|------|----------|
-| 网络下载失败 | 显示错误信息，提示重试 |
-| 磁盘空间不足 | 在下载前检查目标目录可用空间 |
-| 提取失败 | 清理临时文件，提示错误 |
-| 重复安装 | 询问是否强制覆盖 |
-
----
-
-## 4. 使用方式
-
-### 4.1 标准安装流程
+Repository helper:
 
 ```bash
-# 1. 安装 Python 依赖
-pip install -e .
-
-# 2. 下载安装 JDTLS
 python -m scripts.setup_jdtls
-
-# 3. 验证安装
 python -m scripts.setup_jdtls --check
 ```
 
-### 4.2 命令行参数
+The helper downloads JDT LS into:
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| `--check` | 检查安装状态 | `python -m scripts.setup_jdtls --check` |
-| `--os` | 指定操作系统 | `--os windows` |
-| `--arch` | 指定架构 | `--arch x64` |
-| `--force` | 强制重新安装 | `python -m scripts.setup_jdtls --force` |
+```text
+scripts/jdtls/
+```
 
-### 4.3 跨平台支持
+and creates launcher scripts such as:
 
-| 平台 | 架构 | 下载 URL |
-|------|------|----------|
-| Windows | x64 | `...-win32.x64.tar.gz` |
-| Linux | x64 | `...-linux.gtk.x86_64.tar.gz` |
-| Linux | arm64 | `...-linux.gtk.aarch64.tar.gz` |
-| macOS | x64 | `...-macos.x86_64.tar.gz` |
-| macOS | arm64 | `...-macos.aarch64.tar.gz` |
+```text
+scripts/jdtls.cmd
+```
+
+`scripts/jdtls/` is ignored by git because it contains downloaded binary/runtime files.
 
 ---
 
-## 5. 安全性考虑
+## Command Discovery
 
-### 5.1 下载验证 (TODO)
+JDT LS command discovery lives in:
 
-未来应添加 SHA256 校验：
+```text
+src/core/lsp/config.py
+```
+
+For Java, the configured command is:
 
 ```python
-def verify_checksum(file_path: Path, expected_sha256: str) -> bool:
-    """验证下载文件的完整性"""
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest() == expected_sha256
+command=["jdtls"]
 ```
 
-### 5.2 HTTPS
+On Windows, `LanguageConfig.find_server_command()` checks common executable suffixes:
 
-所有下载均使用 HTTPS，确保传输安全。
+- `.cmd`
+- `.bat`
+- `.exe`
 
----
+If it finds `jdtls.cmd` or `jdtls.bat`, it wraps the command as:
 
-## 6. 未来扩展
-
-### 6.1 自动更新检查
-
-```python
-def check_for_updates() -> bool:
-    """检查是否有新版本可用"""
-    response = urllib.request.get(API_URL)
-    latest = response.json()["tag_name"]
-    return latest != JDTLS_VERSION
-```
-
-### 6.2 离线模式支持
-
-预下载 JDTLS 包到本地，通过 `--local` 参数指定本地文件路径：
-
-```bash
-python -m scripts.setup_jdtls --local ./jdtls-1.38.0.tar.gz
-```
-
-### 6.3 多语言支持
-
-未来添加其他语言服务器时，可扩展为通用下载框架：
-
-```
-scripts/
-├── setup_jdtls.py   # Java
-├── setup_pyright.py # Python
-├── setup_tsserver.py # TypeScript
-└── servers/         # 统一的服务器目录
-    ├── jdtls/
-    ├── pyright/
-    └── typescript/
+```text
+cmd.exe /c <resolved launcher>
 ```
 
 ---
 
-## 7. 相关文件索引
+## Runtime Lifecycle
 
-| 文件 | 说明 |
-|------|------|
-| `scripts/setup_jdtls.py` | JDTLS 安装脚本实现 |
-| `scripts/jdtls.cmd` | Windows 启动器 |
-| `scripts/jdtls.sh` | Unix 启动器 |
-| `.gitignore` | 排除下载的 JDTLS |
-| `src/core/lsp/config.py` | Voyager 如何查找 jdtls 命令 |
+JDT LS is no longer started once per CLI command. It is owned by the project-scoped Voyager Server.
+
+```text
+voyager scan .
+  -> VoyagerServer starts
+  -> ProjectSession.start()
+  -> LspClient(Language.JAVA).start()
+  -> JDT LS stays alive
+
+voyager plan ...
+  -> reuse same Server and JDT LS
+
+voyager apply ...
+  -> reuse same Server and JDT LS
+
+voyager stop
+  -> ProjectSession.close()
+  -> LspClient.shutdown()
+```
+
+This avoids repeated JDT LS startup/shutdown noise and keeps the Java index warm between commands.
+
+---
+
+## JDT LS Workspace
+
+JDT LS needs a workspace directory for indexes and metadata. Voyager does not put this workspace under the scanned Java project.
+
+Current behavior:
+
+```text
+%LOCALAPPDATA%/Voyager/jdtls-workspaces/<project-hash>/
+```
+
+or the equivalent user cache location on non-Windows systems.
+
+Reason:
+
+- avoids JDT LS indexing `.voyager/` or its own workspace,
+- avoids polluting the Java project,
+- allows one stable workspace per project path.
+
+---
+
+## LSP Client Responsibilities
+
+Main file:
+
+```text
+src/core/lsp/client.py
+```
+
+Responsibilities:
+
+- start JDT LS as a subprocess,
+- perform LSP initialize/initialized handshake,
+- send JSON-RPC messages over stdio,
+- read responses and diagnostics,
+- expose semantic methods:
+  - `get_symbols()`
+  - `prepare_rename()`
+  - `rename_symbol()`
+- shut down the subprocess on `voyager stop`.
+
+Server mode injects the long-lived `LspClient` into `ExecutionEngine`, so `apply_async()` does not create a fresh JDT LS process.
+
+---
+
+## Logging And Windows Encoding
+
+Server logs go to:
+
+```text
+.voyager/cache/server.log
+```
+
+JDT LS stderr can contain characters that do not encode cleanly in the active Windows console code page. `LspClient` therefore decodes stderr with UTF-8 and common Windows fallbacks, and logs sanitized text.
+
+Known JDT LS shutdown noise is filtered where possible, because JDT LS may emit diagnostics during platform shutdown even after the requested operation has completed successfully.
+
+---
+
+## Failure Policy
+
+If JDT LS cannot be found:
+
+- `scan` may still fall back to static parser,
+- `plan` may still work from graph/static facts,
+- `apply rename_field` returns `lsp_unavailable`,
+- no string replacement fallback is attempted.
+
+This is intentional: `rename_field` is a semantic operation and must be driven by a semantic engine.
+
+---
+
+## Related Files
+
+| File | Purpose |
+| --- | --- |
+| `scripts/setup_jdtls.py` | optional helper to download/install JDT LS |
+| `scripts/jdtls.cmd` | Windows launcher checked by PATH |
+| `src/core/lsp/config.py` | command discovery and Java LSP settings |
+| `src/core/lsp/client.py` | LSP subprocess and JSON-RPC client |
+| `src/core/session/project_session.py` | owns the long-lived `LspClient` |
+| `src/core/server/server.py` | owns `ProjectSession` lifetime |

@@ -25,6 +25,7 @@ class RefType(str, Enum):
     PARAM_REF = "param_ref"
     RETURN_REF = "return_ref"
     FIELD_ACCESS = "field_access"
+    METHOD_CALL = "method_call"
 
 
 class Symbol(BaseModel):
@@ -59,9 +60,9 @@ class Reference(BaseModel):
     """
     A typed relation between two symbols.
 
-    References are the edges of the semantic graph.  Each one records a usage
-    of one symbol inside another (e.g. a field of type ``Order`` creates a
-    ``TYPE_REF`` from the containing class to ``Order``).
+    References are the edges of the semantic graph. Each one records a usage
+    of one symbol inside another, e.g. a field of type ``Order`` creates a
+    ``TYPE_REF`` from the containing class to ``Order``.
 
     Attributes:
         from_symbol: ID of the symbol that contains the reference.
@@ -175,7 +176,38 @@ class SemanticGraph(BaseModel):
 
         for ref in self.find_references_to(field.id):
             files.add(ref.file_path)
+
+        for method in self._bean_accessor_symbols(field):
+            files.add(method.file_path)
+            for ref in self.find_references_to(method.id):
+                files.add(ref.file_path)
         return sorted(files)
 
     def symbols_by_type(self, symbol_type: SymbolType) -> list[Symbol]:
         return [symbol for symbol in self.symbols if symbol.type == symbol_type]
+
+    def _bean_accessor_symbols(self, field: Symbol) -> list[Symbol]:
+        """
+        Return JavaBean accessor methods that are conventionally tied to a field.
+        """
+        parent_id = field.parent_id
+        if not parent_id:
+            return []
+
+        suffix = _java_bean_suffix(field.name)
+        names = {f"get{suffix}", f"set{suffix}", f"is{suffix}"}
+        return [
+            symbol
+            for symbol in self.symbols
+            if symbol.type == SymbolType.METHOD
+            and symbol.parent_id == parent_id
+            and symbol.name in names
+        ]
+
+
+def _java_bean_suffix(name: str) -> str:
+    if not name:
+        return ""
+    if len(name) > 1 and name[0].islower() and name[1].isupper():
+        return name
+    return name[:1].upper() + name[1:]

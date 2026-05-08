@@ -155,10 +155,28 @@ def parse_java_project(project_path: Path, prefer_lsp: bool = True) -> list[Java
     # If jdtls is missing or crashes, we fall back to the static parser so that
     # scan and plan remain usable in lightweight environments.
 
+    return run_async(parse_java_project_async(project_path, prefer_lsp=prefer_lsp))
+
+
+async def parse_java_project_async(
+    project_path: Path,
+    prefer_lsp: bool = True,
+    lsp_client: LspClient | None = None,
+) -> list[JavaClass]:
+    """
+    Async project parser that can reuse an existing LSP client.
+
+    Long-running Voyager processes should pass a started ``LspClient`` so JDT LS
+    is kept warm across scan/plan/apply requests.  The synchronous
+    :func:`parse_java_project` keeps the legacy one-shot behavior.
+    """
+
     project_path = project_path.resolve()
-    if prefer_lsp and get_language_config(Language.JAVA).find_server_command():
+    if prefer_lsp and (
+        lsp_client is not None or get_language_config(Language.JAVA).find_server_command()
+    ):
         try:
-            classes: list[JavaClass] = run_async(_analyze_with_lsp(project_path))
+            classes: list[JavaClass] = await _analyze_with_lsp(project_path, lsp_client)
 
             # The static parser runs as a completeness check: LSP may return partial
             # results if jdtls hasn't finished indexing.  If the LSP result covers at
@@ -260,20 +278,30 @@ def parse_java_source(file_path: Path, text: str) -> list[JavaClass]:
     return classes
 
 
-async def _analyze_with_lsp(project_path: Path) -> list[JavaClass]:
+async def _analyze_with_lsp(
+    project_path: Path, lsp_client: LspClient | None = None
+) -> list[JavaClass]:
+    if lsp_client is not None:
+        await lsp_client.start()
+        return await _analyze_with_lsp_client(project_path, lsp_client)
+
     async with LspClient(Language.JAVA, project_path=project_path) as client:
-        java_files = [
-            path for path in sorted(project_path.rglob("*.java")) if not _is_ignored_path(path)
-        ]
-        classes: list[JavaClass] = []
-        for file_path in java_files:
-            symbols: list[LspSymbolInfo] = await client.get_symbols(file_path)
-            for symbol in symbols:
-                if _is_type_symbol(symbol):
-                    cls = _symbol_to_java_class(file_path, symbol)
-                    if cls is not None:
-                        classes.append(cls)
-        return classes
+        return await _analyze_with_lsp_client(project_path, client)
+
+
+async def _analyze_with_lsp_client(project_path: Path, client: LspClient) -> list[JavaClass]:
+    java_files = [
+        path for path in sorted(project_path.rglob("*.java")) if not _is_ignored_path(path)
+    ]
+    classes: list[JavaClass] = []
+    for file_path in java_files:
+        symbols: list[LspSymbolInfo] = await client.get_symbols(file_path)
+        for symbol in symbols:
+            if _is_type_symbol(symbol):
+                cls = _symbol_to_java_class(file_path, symbol)
+                if cls is not None:
+                    classes.append(cls)
+    return classes
 
 
 def _symbol_to_java_class(file_path: Path, class_symbol_info: LspSymbolInfo) -> JavaClass | None:

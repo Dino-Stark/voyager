@@ -19,6 +19,8 @@ from core.lsp.config import Language, LanguageConfig, get_language_config
 
 logger = logging.getLogger(__name__)
 
+_JDTLS_STDERR_ENCODINGS = ("utf-8", "gbk", "mbcs", "cp1252")
+
 
 @dataclass(frozen=True)
 class LspPosition:
@@ -289,6 +291,12 @@ class LspClient:
             },
         )
         await self._send_notification("initialized", {})
+        # Explicitly disable diagnostics via workspace configuration; some
+        # jdtls versions ignore the initialization option.
+        await self._send_notification(
+            "workspace/didChangeConfiguration",
+            {"settings": {"java": {"diagnostics": {"enabled": False}}}},
+        )
         # Wait for jdtls to signal it has finished internal setup (preference
         # manager, classpath indexing, etc.) before we send the first didOpen.
         try:
@@ -528,7 +536,9 @@ class LspClient:
                 line = await self._process.stderr.readline()
                 if not line:
                     return
-                logger.debug("LSP stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+                message = _decode_process_output(line).rstrip()
+                if message:
+                    logger.debug("LSP stderr: %s", _safe_log_text(message))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -596,18 +606,30 @@ class LspClient:
         elif method == "language/status":
             status_type = params.get("type", "")
             status_msg = params.get("message", "")
-            logger.debug("LSP status: %s - %s", status_type, status_msg)
+            logger.debug(
+                "LSP status: %s - %s",
+                _safe_log_text(str(status_type)),
+                _safe_log_text(str(status_msg)),
+            )
             if status_type in ("Started", "Ready") or "Ready" in status_msg:
                 self._server_ready_event.set()
         elif method == "window/logMessage":
             msg = params.get("message", "")
             level = params.get("type", 3)
+            # Downgrade known harmless jdtls internal errors/warnings so they
+            # do not alarm users.  These are jdtls bugs, not Voyager bugs.
+            if level == 1 and "NullPointerException" in msg and "Publish Diagnostics" in msg:
+                logger.debug("Ignored known jdtls internal error: %s", _safe_log_text(msg))
+                return
+            if "Job found still running after platform shutdown" in msg and "PublishedGradleVersions" in msg:
+                logger.debug("Ignored known jdtls internal warning: %s", _safe_log_text(msg))
+                return
             log = {1: logger.error, 2: logger.warning, 3: logger.info}.get(
                 level, logger.debug
             )
-            log("LSP: %s", msg)
+            log("LSP: %s", _safe_log_text(msg))
         elif method == "window/showMessage":
-            logger.info("LSP message: %s", params.get("message", ""))
+            logger.info("LSP message: %s", _safe_log_text(str(params.get("message", ""))))
 
     def _parse_workspace_edit(self, raw: dict[str, Any]) -> LspWorkspaceEdit:
         edit = LspWorkspaceEdit()
@@ -668,3 +690,24 @@ class LspClient:
             start=LspPosition(**raw["start"]),
             end=LspPosition(**raw["end"]),
         )
+
+
+def _decode_process_output(raw: bytes) -> str:
+    for encoding in _JDTLS_STDERR_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", errors="backslashreplace")
+
+
+def _safe_log_text(text: str) -> str:
+    """
+    Keep logs printable on legacy Windows consoles.
+
+    Rich's legacy Windows renderer can crash when a log record contains U+FFFD
+    and stdout is still using a non-UTF-8 code page.  Escaping non-ASCII in log
+    records preserves the information without letting diagnostic noise abort a
+    Voyager command.
+    """
+    return text.encode("ascii", errors="backslashreplace").decode("ascii")

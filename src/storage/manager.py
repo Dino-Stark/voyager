@@ -21,6 +21,9 @@ OPERATIONS_LOG = "operations.log"
 RULES_FILE = "rules.yaml"
 CACHE_DIR = "cache"
 PENDING_PLAN_FILE = "pending_plan.json"
+SESSION_FILE = "session.json"
+SERVER_FILE = "server.json"
+SERVER_LOG_FILE = "server.log"
 
 
 class StorageManager:
@@ -146,3 +149,76 @@ class StorageManager:
         Return the cache directory path.
         """
         return self.voyager_dir / CACHE_DIR
+
+    def load_session_path(self) -> Path:
+        """
+        Return the legacy path used to persist background session state.
+        """
+        return self.get_cache_dir() / SESSION_FILE
+
+    def load_server_info_path(self) -> Path:
+        """
+        Return the path used to persist the running Voyager server connection info.
+        """
+        return self.get_cache_dir() / SERVER_FILE
+
+    def get_server_log_path(self) -> Path:
+        """
+        Return the Voyager server log path.
+        """
+        return self.get_cache_dir() / SERVER_LOG_FILE
+
+    def load_session(self) -> dict | None:
+        """
+        Load the legacy background session state, if present.
+        """
+        session_path = self.load_session_path()
+        if not session_path.exists():
+            return None
+        try:
+            return json.loads(session_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to load session state from %s: %s", session_path, exc)
+            return None
+
+    def save_session(self, data: dict) -> Path:
+        """
+        Persist legacy background session state.
+        """
+        session_path = self.load_session_path()
+        session_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return session_path
+
+    def clear_session(self) -> None:
+        """
+        Remove the legacy background session state.
+        """
+        self.load_session_path().unlink(missing_ok=True)
+
+    def load_server_info(self) -> dict | None:
+        """
+        Load the running Voyager server connection info, if present.
+        """
+        server_path = self.load_server_info_path()
+        if not server_path.exists():
+            return None
+        try:
+            return json.loads(server_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to load server state from %s: %s", server_path, exc)
+            return None
+
+    def save_server_info(self, data: dict) -> Path:
+        """
+        Persist running Voyager server connection info.
+        """
+        server_path = self.load_server_info_path()
+        server_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return server_path
+
+    def clear_server_info(self) -> None:
+        """
+        Remove running Voyager server connection info.
+        """
+        self.load_server_info_path().unlink(missing_ok=True)
+        self.clear_session()

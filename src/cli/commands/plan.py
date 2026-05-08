@@ -3,8 +3,8 @@
 from pathlib import Path
 
 from rich.console import Console
-from core.engine.execution_engine import ExecutionEngine
-from core.operation.models import AddFieldOperation, Operation, RemoveFieldOperation, RenameFieldOperation
+from core.operation.models import AddFieldOperation, Operation, PlanResult, RemoveFieldOperation, RenameFieldOperation
+from core.server.client import VoyagerServerClient
 from storage.manager import StorageManager
 
 console = Console()
@@ -25,13 +25,6 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
     project_path = _find_project_root()
     storage = StorageManager(project_path)
 
-    # Load graph
-    graph = storage.load_graph()
-    if graph is None:
-        console.print("[red]No semantic graph found.[/red]")
-        console.print("Run [bold]voyager scan <project_path>[/bold] first.")
-        return None
-
     # Build operation
     try:
         operation = _build_operation(op_type, target, value)
@@ -41,10 +34,12 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
 
     console.print(f"[bold]Planning:[/bold] {operation.op.value} {target}" + (f" -> {value}" if value else ""))
 
-    # Execute plan
-    engine = ExecutionEngine(project_path, storage)
-    engine.graph = graph
-    result = engine.plan(operation)
+    # Execute plan through the persistent project server.
+    try:
+        result = PlanResult.model_validate(VoyagerServerClient(project_path).plan(operation))
+    except Exception as e:
+        console.print(f"[red]Plan failed: {e}[/red]")
+        return None
 
     # Display result
     if result.is_valid:

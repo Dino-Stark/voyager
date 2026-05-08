@@ -1,328 +1,221 @@
-# Voyager V1 架构设计（POC）
+# Voyager V1 Architecture
 
-## 🎯 目标（V1 Scope）
+## Scope
 
-实现一个最小可用系统，支持：
+Voyager V1 solves one narrow problem:
 
-> **安全地对 DTO 字段进行重命名，并自动更新所有引用（跨文件一致性）**
+> Safely rename a Java DTO/POJO field and keep all related source files consistent.
 
----
-
-## 🚫 V1 不包含
-
-* 多语言支持
-* 多 Agent 协作
-* 自动架构设计
-* 完整 call graph
-* VS Code 插件
-* 自我进化（skill evolution）
-
----
-
-## 🧱 整体架构
-
-```
-voyager/
-├── cmd/                     # CLI 入口
-├── core/                    # 核心逻辑
-│   ├── parser/              # AST 解析（JavaParser）
-│   ├── graph/               # 语义图构建
-│   ├── operation/           # 操作定义（rename 等）
-│   ├── engine/              # 执行引擎（核心）
-│   ├── diff/                # diff 生成
-│   └── rules/               # 规则系统
-├── storage/
-│   └── .voyager/              # 本地状态存储
-├── cli/
-│   └── commands/            # CLI 命令实现
-└── utils/
-```
-
----
-
-## 📦 .voyager 目录结构
-
-```
-.voyager/
-├── graph.json          # 语义图（核心）
-├── index.json          # symbol索引（可选）
-├── operations.log      # 操作历史（可选）
-├── rules.yaml          # 项目规则
-└── cache/              # AST缓存（可选）
-```
-
----
-
-## 🧠 核心模块说明
-
-### 1. Parser（AST解析）
-
-基于 JavaParser：
-
-职责：
-
-* 解析 Java 文件
-* 提取 class / field / method
-* 提供基础 AST 访问能力
-
----
-
-### 2. Semantic Graph（语义图）
-
-最小结构：
-
-```json
-{
-  "symbols": [
-    {
-      "id": "OrderDTO",
-      "type": "class",
-      "fields": ["id", "amount"],
-      "file": "order/OrderDTO.java"
-    }
-  ],
-  "references": [
-    {
-      "from": "OrderService.create",
-      "to": "OrderDTO"
-    }
-  ]
-}
-```
-
----
-
-### 3. Operation Spec（操作协议）
-
-V1支持：
-
-```json
-[
-  "add_field",
-  "remove_field",
-  "rename_field",
-  "update_api",
-  "add_function",
-  "update_function_signature"
-]
-```
-
-重点实现：
+The implemented V1 operation is:
 
 ```json
 {
   "op": "rename_field",
-  "target": "OrderDTO.userId",
-  "to": "customerId"
+  "target": "UserDTO.userName",
+  "to": "customerName"
 }
 ```
 
----
-
-### 4. Operation Engine（执行引擎）
-
-执行流程：
-
-```
-Plan
- → Validate（规则）
- → Apply（内存修改）
- → Re-parse（重新生成 graph）
- → Validate again
- → Commit（写文件）
-```
+`add_field` and `remove_field` exist as operation models, but the execution engine rejects them in V1.
 
 ---
 
-### 5. Diff Engine
+## Design Principles
 
-职责：
-
-* 比较修改前后代码
-* 生成结构化 diff
-
-输出示例：
-
-```json
-{
-  "file": "OrderDTO.java",
-  "diff": "...",
-  "status": "pending"
-}
-```
+1. Semantic-first: operations target symbols, not raw text.
+2. Correctness over cleverness: when uncertain, reject the operation.
+3. All-or-nothing writes: partial success is not allowed.
+4. Verifiable changes: rebuild graph and run post-validation before commit.
+5. Long-lived project context: JDT LS belongs to a project Server, not to each short CLI command.
 
 ---
 
-### 6. Rules Engine（规则系统）
+## Current Runtime Architecture
 
-职责：
+```text
+CLI / future IDE / future Agent
+        |
+        | VoyagerServerClient
+        v
+Voyager Server
+        |
+        | owns
+        v
+ProjectSession
+  - LspClient(JAVA)
+  - ExecutionEngine
+  - StorageManager
 
-> 检测错误 + 阻断执行
-
----
-
-#### 示例规则：DTO 重复定义
-
-```yaml
-rules:
-  - id: dto_duplicate
-    type: symbol_uniqueness
-    target: DTO
-    action: error
+        |
+        | LSP JSON-RPC over stdio
+        v
+JDT LS
 ```
 
----
+The CLI is now a client. It no longer owns the execution pipeline directly. The project-scoped Server owns the long-lived `ProjectSession`, which keeps JDT LS warm across `scan -> plan -> apply`.
 
-#### 检测逻辑
-
-* same_name + different_structure → ❌ error
-* different_name + same_structure → ⚠️ warn
+See [Voyager Server Mode.md](./Voyager%20Server%20Mode.md) for the detailed Server lifecycle.
 
 ---
 
-### 7. Reference System（引用关系）
+## Source Layout
 
-定义：
-
-> 能被类型系统解析的引用
-
-包括：
-
-* 类型引用
-* 方法参数
-* 返回值
-
-不包括：
-
-* 字符串
-* 注释
-
----
-
-## ⚙️ CLI 设计（V1）
-
-示例：
-
-```bash
-voyager plan rename OrderDTO.userId customerId
-```
-
-输出：
-
-```json
-{
-  "operations": [...],
-  "affected_files": [...],
-  "violations": []
-}
+```text
+src/
+├── voyager_cmd/
+│   ├── main.py          # click CLI: serve/scan/plan/apply/status/stop
+│   ├── server.py        # python -m voyager_cmd.server
+│   └── daemon.py        # legacy compatibility entrypoint
+├── cli/commands/
+│   ├── scan.py          # CLI presentation + server client call
+│   ├── plan.py
+│   └── apply.py
+├── core/
+│   ├── server/          # VoyagerServer, VoyagerServerClient, local protocol
+│   ├── session/         # ProjectSession and legacy daemon aliases
+│   ├── parser/          # Java parser: LSP first, static fallback
+│   ├── graph/           # SemanticGraph and GraphBuilder
+│   ├── operation/       # Pydantic operation/result models
+│   ├── engine/          # planning/apply pipeline
+│   ├── lsp/             # LSP client and language config
+│   ├── rules/           # pre/post validators
+│   └── diff/            # currently minimal utility layer
+├── storage/             # .voyager persistence
+└── utils/               # async helper
 ```
 
 ---
 
-执行：
+## Persistent Project State
 
-```bash
-voyager apply
+All project-local derived state lives under the Java project root:
+
+```text
+.voyager/
+├── graph.json              # semantic graph
+├── pending_plan.json       # operation saved by plan for a later apply
+├── operations.log          # successful apply history
+├── rules.yaml              # optional rules
+└── cache/
+    ├── server.json         # connection info for the running Voyager Server
+    └── server.log          # server/JDT LS lifecycle logs
 ```
 
----
-
-## ❗一致性策略（必须）
-
-采用：
-
-> **强一致（All-or-nothing）**
-
-规则：
-
-* 任意失败 → 回滚
-* 不允许部分成功
+JDT LS workspace data does not live inside the scanned project. `LspClient` stores it under the user cache directory, keyed by project path, to avoid JDT LS indexing its own workspace or `.voyager` state.
 
 ---
 
-## ❗失败处理
+## Scan
 
-返回结构化错误：
-
-```json
-{
-  "error": {
-    "type": "symbol_not_found",
-    "target": "OrderDTO.userId",
-    "file": "OrderService.java"
-  }
-}
+```text
+voyager scan .
+  -> VoyagerServerClient.scan()
+  -> project/scan
+  -> ProjectSession.scan()
+  -> parse_java_project_async(project_path, lsp_client=reused_jdtls)
+  -> GraphBuilder.build(classes)
+  -> StorageManager.save_graph()
 ```
 
----
+Parser strategy:
 
-## ⚠️ V1 限制（非常重要）
+- If JDT LS is available, try LSP `textDocument/documentSymbol`.
+- Run the static parser as a completeness check.
+- If LSP output is incomplete or fails, fall back to static parsing.
 
-仅支持：
-
-* 普通 POJO DTO
-* 明确类型引用
-* 无反射 / 动态代理
-
-不支持：
-
-* Spring 自动注入分析
-* Lombok（建议禁用）
-* 深层泛型解析
+This keeps `scan` useful even when JDT LS is not fully ready, while still using LSP when it gives complete semantic facts.
 
 ---
 
-## 🔁 Graph 更新策略
+## Plan
 
-V1：
+```text
+voyager plan rename UserDTO.userName customerName
+  -> build RenameFieldOperation
+  -> VoyagerServerClient.plan(operation)
+  -> operation/plan
+  -> ExecutionEngine.plan_async()
+  -> RuleValidator.validate_pre()
+  -> SemanticGraph.get_affected_files_for_field()
+  -> save .voyager/pending_plan.json
+```
 
-> 全量重建（保证正确）
+`plan` does not write source files. It validates the operation and estimates the affected files.
 
-后续优化：
+For `rename_field`, affected-file calculation includes:
 
-> 增量更新
+- the field declaration file,
+- direct typed field-access references,
+- JavaBean accessor methods (`getX`, `setX`, `isX`),
+- typed method-call references to those accessors.
 
----
-
-## 🧪 V1 验收标准
-
-系统必须做到：
-
-* rename_field 100%成功（跨文件）
-* 无漏改
-* 无误改
-* 修改后代码可编译
-
----
-
-## 🚀 开发顺序（强烈建议）
-
-1. JavaParser 解析 DTO
-2. 构建 symbol graph
-3. 实现 reference 查找
-4. 实现 rename_field（核心）
-5. 生成 diff
-6. 应用修改 + 编译验证
-7. 加入规则系统
-8. CLI 封装
+This makes `plan` align better with what JDT LS will actually modify during rename.
 
 ---
 
-## 🧩 后续扩展方向（非V1）
+## Apply
 
-* call graph
-* 微服务架构图
-* 多语言支持
-* Agent Planner
-* VS Code 插件
+```text
+voyager apply -y
+  -> read .voyager/pending_plan.json
+  -> VoyagerServerClient.apply(operation)
+  -> operation/apply
+  -> ExecutionEngine.apply_async()
+  -> validate_pre
+  -> LSP prepareRename + rename
+  -> apply returned edits in memory
+  -> rebuild graph from in-memory modified files
+  -> validate_post
+  -> commit all patches
+  -> save graph and operation log
+```
+
+`rename_field` must use JDT LS `textDocument/rename`. Voyager deliberately does not fall back to string replacement for apply.
 
 ---
 
-## 🧠 核心原则（必须遵守）
+## Rules And Validation
 
-1. 操作基于“语义”，不是文本
-2. 所有修改必须可回滚
-3. 不追求智能，优先保证正确
-4. 不确定的情况一律拒绝执行
+Pre-validation checks:
+
+- target field exists,
+- new field name does not conflict,
+- custom rules do not block the operation.
+
+Post-validation checks:
+
+- new field exists after modification,
+- old field definition is gone,
+- old typed field access does not remain,
+- duplicate DTO rules still pass.
+
+If post-validation fails, patches are discarded before any file is written.
 
 ---
+
+## Failure Model
+
+Failure handling is conservative:
+
+- pre-validation failure: return invalid result, touch no files;
+- LSP failure: return error, touch no files;
+- post-validation failure: discard in-memory patches, touch no files;
+- commit failure: roll back files already written from in-memory backups.
+
+The graph on disk is updated only after successful commit.
+
+---
+
+## V1 Non-Goals
+
+V1 intentionally does not implement:
+
+- full call graph,
+- multi-language support,
+- reflection or dynamic proxy analysis,
+- Lombok generated-code analysis,
+- Spring dependency injection analysis,
+- automatic architecture design,
+- multi-agent planning.
+
+These can be future features, but V1 stays narrow so the rename pipeline remains testable and reliable.

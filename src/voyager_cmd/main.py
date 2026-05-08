@@ -1,10 +1,12 @@
 """Voyager CLI entry point.
 
 Usage:
+    voyager serve [<project_path>]
     voyager scan <project_path>
     voyager plan rename <class.field> <new_name>
     voyager apply
     voyager status
+    voyager stop
 """
 
 import logging
@@ -19,6 +21,8 @@ from cli.commands.apply import apply_plan
 from cli.commands.apply import _find_project_root as _find_project_root_for_status
 from cli.commands.plan import plan_operation
 from cli.commands.scan import scan_project
+from core.server.client import VoyagerServerClient
+from core.server.server import run_server
 
 console = Console()
 
@@ -44,6 +48,37 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     _setup_logging(verbose)
+
+
+@cli.command()
+@click.argument("project_path", type=click.Path(exists=True, file_okay=False), required=False)
+@click.pass_context
+def serve(ctx: click.Context, project_path: str | None) -> None:
+    """
+    Run the Voyager server for a Java project.
+    """
+    from pathlib import Path
+
+    root = Path(project_path or ".").resolve()
+    client = VoyagerServerClient(root, auto_start=False)
+    try:
+        status_result = client.status()
+    except Exception:
+        status_result = None
+
+    if status_result and status_result.get("running"):
+        console.print(f"[green]Voyager server already running for[/green] {root}")
+        return
+
+    console.print(f"[bold]Starting Voyager server[/bold] for {root}")
+    console.print("[dim]Press Ctrl+C to stop the server.[/dim]")
+    try:
+        run_server(root)
+    except KeyboardInterrupt:
+        from storage.manager import StorageManager
+
+        StorageManager(root).clear_server_info()
+        console.print("\n[yellow]Voyager server stopped.[/yellow]")
 
 
 @cli.command()
@@ -96,18 +131,27 @@ def status(ctx: click.Context) -> None:
     """
     from storage.manager import StorageManager
 
-    manager = StorageManager(_find_project_root_for_status())
+    project_path = _find_project_root_for_status()
+    manager = StorageManager(project_path)
     graph = manager.load_graph()
+
+    try:
+        server_status = VoyagerServerClient(project_path, auto_start=False).status()
+        server_value = f"running (pid {server_status.get('pid')})"
+    except Exception:
+        server_value = "stopped"
 
     if graph is None:
         console.print("[yellow]No semantic graph found.[/yellow]")
         console.print("Run [bold]voyager scan <project_path>[/bold] to build one.")
+        console.print(f"Voyager server: [cyan]{server_value}[/cyan]")
         return
 
     table = Table(title="Voyager Status")
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="green")
 
+    table.add_row("Server", server_value)
     classes = [s for s in graph.symbols if s.type.value == "class"]
     fields = [s for s in graph.symbols if s.type.value == "field"]
     methods = [s for s in graph.symbols if s.type.value == "method"]
@@ -118,6 +162,21 @@ def status(ctx: click.Context) -> None:
     table.add_row("References", str(len(graph.references)))
 
     console.print(table)
+
+
+@cli.command()
+@click.pass_context
+def stop(ctx: click.Context) -> None:
+    """
+    Stop the Voyager server for the current project.
+    """
+    project_path = _find_project_root_for_status()
+    try:
+        VoyagerServerClient(project_path, auto_start=False).shutdown()
+    except Exception as exc:
+        console.print(f"[yellow]No running Voyager server found:[/yellow] {exc}")
+        return
+    console.print("[green]Voyager server stopped.[/green]")
 
 
 if __name__ == "__main__":

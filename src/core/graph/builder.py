@@ -40,6 +40,7 @@ class GraphBuilder:
         for cls in classes:
             self._extract_type_references(cls)
             self._extract_field_access_references(cls)
+            self._extract_method_call_references(cls)
 
         self._graph.build_index()
         logger.info(
@@ -189,6 +190,49 @@ class GraphBuilder:
                     text.count("\n", 0, match.start()) + 1,
                     match.start() - text.rfind("\n", 0, match.start()),
                     {"receiver": var_name, "resolved": member in known_fields},
+                )
+
+    def _extract_method_call_references(self, cls: JavaClass) -> None:
+        """
+        Extract simple typed method call references.
+
+        This records ``var.method(...)`` when ``var`` has an explicit known type
+        in the same file. It is intentionally conservative and exists mainly so
+        plan output can include JavaBean getter/setter call sites that JDT LS will
+        update during field rename.
+        """
+        try:
+            text = cls.file_path.read_text(encoding="utf-8")
+        except OSError:
+            return
+
+        variable_types = self._collect_variable_types(text, cls)
+        if not variable_types:
+            return
+
+        file_path = self._display_path(cls.file_path)
+        for var_name, class_id in variable_types.items():
+            target_cls = self._classes_by_fqn.get(class_id)
+            if target_cls is None:
+                continue
+            known_methods = {method.name for method in target_cls.methods}
+            pattern = re.compile(
+                rf"\b{re.escape(var_name)}\s*\.\s*(?P<member>[A-Za-z_$][\w$]*)\s*\("
+            )
+            for match in pattern.finditer(text):
+                member = match.group("member")
+                if member not in known_methods:
+                    continue
+                target_method = f"{class_id}.{member}"
+                from_symbol = self._nearest_method_id(cls, text, match.start()) or cls.fqn
+                self._add_reference(
+                    from_symbol,
+                    target_method,
+                    RefType.METHOD_CALL,
+                    file_path,
+                    text.count("\n", 0, match.start()) + 1,
+                    match.start() - text.rfind("\n", 0, match.start()),
+                    {"receiver": var_name},
                 )
 
     def _collect_variable_types(self, text: str, cls: JavaClass) -> dict[str, str]:

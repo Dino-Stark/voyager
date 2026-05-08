@@ -13,6 +13,26 @@ from pathlib import Path
 
 EXAMPLES_DIR = Path(__file__).resolve().parent
 SOURCES_DIR = EXAMPLES_DIR / "_sources"
+REPO_ROOT = EXAMPLES_DIR.parent
+
+
+def stop_voyager_server(project_path: Path) -> None:
+    """
+    Stop a running Voyager Server before deleting the runtime example.
+
+    Reset removes the target `.voyager/` directory. If a Server is still running,
+    deleting that state file first would leave the Server/JDT LS process harder
+    to discover and stop later.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    try:
+        from core.server.client import VoyagerServerClient
+
+        VoyagerServerClient(project_path, auto_start=False).shutdown()
+        print(f"Stopped Voyager server: {project_path}")
+    except Exception:
+        # No server is the common case when reset is used before a test run.
+        return
 
 
 def reset_project(name: str) -> None:
@@ -22,6 +42,9 @@ def reset_project(name: str) -> None:
     if not source.exists():
         print(f"Source not found: {source}")
         sys.exit(1)
+
+    if target.exists():
+        stop_voyager_server(target.resolve())
 
     # Clean target content (don't rmtree the directory itself to avoid Windows locks)
     if target.exists():

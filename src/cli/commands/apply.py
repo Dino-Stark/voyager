@@ -5,13 +5,14 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
-from core.engine.execution_engine import ExecutionEngine
 from core.operation.models import (
     AddFieldOperation,
+    ApplyResult,
     Operation,
     RemoveFieldOperation,
     RenameFieldOperation,
 )
+from core.server.client import VoyagerServerClient
 from storage.manager import StorageManager
 
 console = Console()
@@ -45,9 +46,12 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
             console.print("[yellow]Cancelled.[/yellow]")
             return None
 
-    # Execute
-    engine = ExecutionEngine(project_path, storage)
-    result = engine.apply(operation)
+    # Execute through the persistent project server.
+    try:
+        result = ApplyResult.model_validate(VoyagerServerClient(project_path).apply(operation))
+    except Exception as e:
+        console.print(f"[red]Apply failed: {e}[/red]")
+        return None
 
     # Display result
     if result.success:

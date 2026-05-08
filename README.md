@@ -53,6 +53,14 @@ voyager plan rename OrderDTO.userId customerId
 voyager apply
 ```
 
+### 6. 停止项目 Server
+
+```bash
+voyager stop
+```
+
+`scan/plan/apply` 会自动启动项目级 Voyager Server。Server 会持有 JDTLS，避免每次命令都重复启动和关闭语言服务器。
+
 ## JDTLS 安装说明
 
 Voyager 使用 Eclipse JDT Language Server 进行 Java 语义分析。`setup_jdtls.py` 脚本会自动检测操作系统和架构，下载对应版本的 JDTLS (~150MB)。
@@ -94,4 +102,6 @@ python -m scripts.setup_jdtls --force
 - [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) — Voyager V1 使用的 Java 语言服务器
 - [LSP documentSymbol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_documentSymbol) — 项目解析使用的 LSP 方法
 - [LSP textDocument/rename](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_rename) — 字段重命名使用的 LSP 方法
-- `designs/V1/LSP Architecture.md` — 项目内 LSP 架构详解文档
+- `designs/V1/Architecture V1.md` — 当前 V1 总体架构
+- `designs/V1/Voyager Server Mode.md` — 项目级 Server 与 JDTLS 生命周期
+- `designs/V1/JDTLS Dependency Management.md` — JDTLS 安装、发现和运行时说明

@@ -25,9 +25,7 @@
       "parent_id": "com.shop.OrderDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -40,9 +38,7 @@
       "parent_id": "com.shop.OrderDTO",
       "extra": {
         "type_name": "double",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -56,9 +52,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -73,13 +67,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "orderId",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -93,9 +85,7 @@
       "extra": {
         "return_type": "double",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -110,13 +100,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "totalPrice",
+            "name": "",
             "type_name": "double"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -143,9 +131,7 @@
       "parent_id": "com.shop.OrderService",
       "extra": {
         "type_name": "UserDTO",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -160,17 +146,15 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "order",
+            "name": "",
             "type_name": "OrderDTO"
           },
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -184,9 +168,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -213,9 +195,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -228,9 +208,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -243,9 +221,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "int",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -259,9 +235,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -276,13 +250,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "userName",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -296,9 +268,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -313,13 +283,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "email",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -333,9 +301,7 @@
       "extra": {
         "return_type": "int",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -350,13 +316,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "age",
+            "name": "",
             "type_name": "int"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -385,13 +349,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -406,13 +368,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -439,9 +399,7 @@
       "parent_id": "com.shop.OrderDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -454,9 +412,7 @@
       "parent_id": "com.shop.OrderDTO",
       "extra": {
         "type_name": "double",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -470,9 +426,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -487,13 +441,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "orderId",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -507,9 +459,7 @@
       "extra": {
         "return_type": "double",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -524,13 +474,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "totalPrice",
+            "name": "",
             "type_name": "double"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -557,9 +505,7 @@
       "parent_id": "com.shop.OrderService",
       "extra": {
         "type_name": "UserDTO",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -574,17 +520,15 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "order",
+            "name": "",
             "type_name": "OrderDTO"
           },
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -598,9 +542,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -627,9 +569,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -642,9 +582,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "String",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -657,9 +595,7 @@
       "parent_id": "com.shop.UserDTO",
       "extra": {
         "type_name": "int",
-        "modifiers": [
-          "private"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -673,9 +609,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -690,13 +624,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "userName",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -710,9 +642,7 @@
       "extra": {
         "return_type": "String",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -727,13 +657,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "email",
+            "name": "",
             "type_name": "String"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -747,9 +675,7 @@
       "extra": {
         "return_type": "int",
         "parameters": [],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -764,13 +690,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "age",
+            "name": "",
             "type_name": "int"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -799,13 +723,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     },
     {
@@ -820,13 +742,11 @@
         "return_type": "void",
         "parameters": [
           {
-            "name": "user",
+            "name": "",
             "type_name": "UserDTO"
           }
         ],
-        "modifiers": [
-          "public"
-        ]
+        "modifiers": []
       }
     }
   ],
@@ -851,7 +771,7 @@
       "line": 6,
       "column": 17,
       "extra": {
-        "parameter": "order",
+        "parameter": "",
         "type_name": "OrderDTO"
       }
     },
@@ -863,7 +783,7 @@
       "line": 6,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     },
@@ -875,7 +795,7 @@
       "line": 4,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     },
@@ -887,7 +807,7 @@
       "line": 10,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     },
@@ -911,7 +831,7 @@
       "line": 6,
       "column": 17,
       "extra": {
-        "parameter": "order",
+        "parameter": "",
         "type_name": "OrderDTO"
       }
     },
@@ -923,7 +843,7 @@
       "line": 6,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     },
@@ -935,7 +855,7 @@
       "line": 4,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     },
@@ -947,7 +867,7 @@
       "line": 10,
       "column": 17,
       "extra": {
-        "parameter": "user",
+        "parameter": "",
         "type_name": "UserDTO"
       }
     }

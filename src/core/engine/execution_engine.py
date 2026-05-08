@@ -24,7 +24,11 @@ from core.operation.models import (
     RemoveFieldOperation,
     RenameFieldOperation,
 )
-from core.parser.java_parser import parse_java_project, parse_java_project_static_with_overrides
+from core.parser.java_parser import (
+    parse_java_project,
+    parse_java_project_async,
+    parse_java_project_static_with_overrides,
+)
 from core.rules.validator import RuleValidator
 from storage.manager import StorageManager
 from utils.async_helpers import run_async
@@ -83,6 +87,7 @@ class ExecutionEngine:
         self.storage = storage or StorageManager(self.project_path)
         self.graph: SemanticGraph | None = None
         self.validator = RuleValidator(self.storage.load_rules_path())
+        self._lsp_client: LspClient | None = None
 
     def ensure_graph(self, force_rebuild: bool = False) -> SemanticGraph:
         """
@@ -95,12 +100,18 @@ class ExecutionEngine:
         Returns:
             The semantic graph for the project.
         """
+        return run_async(self.ensure_graph_async(force_rebuild))
+
+    async def ensure_graph_async(self, force_rebuild: bool = False) -> SemanticGraph:
+        """
+        Async variant of :meth:`ensure_graph` for long-lived server sessions.
+        """
         if self.graph is not None and not force_rebuild:
             return self.graph
 
         graph = None if force_rebuild else self.storage.load_graph()
         if graph is None:
-            classes = parse_java_project(self.project_path)
+            classes = await self._parse_project_async()
             graph = GraphBuilder(self.project_path).build(classes)
             self.storage.save_graph(graph)
 
@@ -125,6 +136,15 @@ class ExecutionEngine:
         classes = parse_java_project_static_with_overrides(self.project_path, file_overrides or {})
         return GraphBuilder(self.project_path).build(classes)
 
+    def set_lsp_client(self, client: LspClient | None) -> None:
+        """
+        Install a reusable LSP client for long-lived sessions.
+
+        When set, the engine will reuse the existing JDT LS process for parse and
+        rename operations instead of spawning a fresh server for every command.
+        """
+        self._lsp_client = client
+
     def plan(self, operation: Operation) -> PlanResult:
         """
         Validate an operation and compute the likely affected files.
@@ -136,7 +156,13 @@ class ExecutionEngine:
             A PlanResult indicating whether the operation is valid and which
             files are expected to be affected.
         """
-        graph = self.ensure_graph()
+        return run_async(self.plan_async(operation))
+
+    async def plan_async(self, operation: Operation) -> PlanResult:
+        """
+        Async variant of :meth:`plan` for server usage.
+        """
+        graph = await self.ensure_graph_async()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
             return PlanResult(
@@ -167,14 +193,19 @@ class ExecutionEngine:
             An ApplyResult indicating success or failure, including any
             modified files or validation errors.
         """
+        return run_async(self.apply_async(operation))
 
-        graph = self.ensure_graph()
+    async def apply_async(self, operation: Operation) -> ApplyResult:
+        """
+        Async variant of :meth:`apply` for server usage.
+        """
+        graph = await self.ensure_graph_async()
         violations = self.validator.validate_pre(graph, operation)
         if violations:
             return ApplyResult(success=False, operation=operation, errors=violations)
 
         try:
-            patches = self._build_patches(graph, operation)
+            patches = await self._build_patches_async(graph, operation)
             if not patches:
                 raise EngineError(
                     ErrorType.VALIDATION_FAILED,
@@ -216,8 +247,13 @@ class ExecutionEngine:
             return ApplyResult(success=False, operation=operation, errors=[error.to_dict()])
 
     def _build_patches(self, graph: SemanticGraph, operation: Operation) -> list[FilePatch]:
+        return run_async(self._build_patches_async(graph, operation))
+
+    async def _build_patches_async(
+        self, graph: SemanticGraph, operation: Operation
+    ) -> list[FilePatch]:
         if isinstance(operation, RenameFieldOperation):
-            return self._build_rename_patches(graph, operation)
+            return await self._build_rename_patches_async(graph, operation)
         if isinstance(operation, AddFieldOperation):
             raise UnsupportedOperationError("add_field is declared but not implemented in V1")
         if isinstance(operation, RemoveFieldOperation):
@@ -225,6 +261,11 @@ class ExecutionEngine:
         raise UnsupportedOperationError(f"Unsupported operation: {operation}")
 
     def _build_rename_patches(
+        self, graph: SemanticGraph, operation: RenameFieldOperation
+    ) -> list[FilePatch]:
+        return run_async(self._build_rename_patches_async(graph, operation))
+
+    async def _build_rename_patches_async(
         self, graph: SemanticGraph, operation: RenameFieldOperation
     ) -> list[FilePatch]:
         # Currently only field rename is supported.  Class and method rename
@@ -254,7 +295,9 @@ class ExecutionEngine:
                 target=operation.target,
             )
 
-        workspace_edit = run_async(self._request_lsp_rename(source_path, field_symbol, operation))
+        workspace_edit = await self._request_lsp_rename(
+            source_path, field_symbol, operation, self._lsp_client
+        )
         if workspace_edit.is_empty:
             raise EngineError(
                 ErrorType.VALIDATION_FAILED,
@@ -286,23 +329,36 @@ class ExecutionEngine:
         source_path: Path,
         field_symbol: Any,
         operation: RenameFieldOperation,
+        client: LspClient | None = None,
     ) -> LspWorkspaceEdit:
+        if client is not None:
+            return await self._request_lsp_rename_with_client(source_path, field_symbol, operation, client)
+
         async with LspClient(Language.JAVA, self.project_path) as client:
-            # Voyager's Symbol uses 1-based line/column (human-readable), but LSP uses
-            # 0-based positions internally, so we subtract 1 for the protocol conversion.
-            position = LspPosition(
-                line=field_symbol.line - 1,
-                character=field_symbol.column - 1,
+            return await self._request_lsp_rename_with_client(source_path, field_symbol, operation, client)
+
+    async def _request_lsp_rename_with_client(
+        self,
+        source_path: Path,
+        field_symbol: Any,
+        operation: RenameFieldOperation,
+        client: LspClient,
+    ) -> LspWorkspaceEdit:
+        # Voyager's Symbol uses 1-based line/column (human-readable), but LSP uses
+        # 0-based positions internally, so we subtract 1 for the protocol conversion.
+        position = LspPosition(
+            line=field_symbol.line - 1,
+            character=field_symbol.column - 1,
+        )
+        rename_range = await client.prepare_rename(source_path, position)
+        if rename_range is None:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "LSP rejected this location for rename",
+                target=operation.target,
+                file_path=str(source_path),
             )
-            rename_range = await client.prepare_rename(source_path, position)
-            if rename_range is None:
-                raise EngineError(
-                    ErrorType.VALIDATION_FAILED,
-                    "LSP rejected this location for rename",
-                    target=operation.target,
-                    file_path=str(source_path),
-                )
-            return await client.rename_symbol(source_path, position, operation.to)
+        return await client.rename_symbol(source_path, position, operation.to)
 
     def _compute_affected_files(self, graph: SemanticGraph, operation: Operation) -> list[str]:
         if isinstance(operation, RenameFieldOperation):
@@ -361,6 +417,15 @@ class ExecutionEngine:
             if isinstance(exc, EngineError):
                 raise
             raise EngineError(ErrorType.WRITE_ERROR, f"Write failed and was rolled back: {exc}")
+
+    async def _parse_project_async(self) -> list[Any]:
+        return await parse_java_project_async(
+            self.project_path,
+            lsp_client=self._lsp_client,
+        )
+
+    def _parse_project(self) -> list[Any]:
+        return run_async(self._parse_project_async())
 
 
 def apply_lsp_edits(content: str, edits: list[LspTextEdit]) -> str:
