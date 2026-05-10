@@ -52,7 +52,7 @@ ProjectSession
 JDT LS
 ```
 
-The CLI is now a client. It no longer owns the execution pipeline directly. The project-scoped Server owns the long-lived `ProjectSession`, which keeps JDT LS warm across `scan -> plan -> apply`.
+The CLI is now a client. It no longer owns the execution pipeline directly. `voyager start` explicitly starts the project-scoped Server in the background, and `scan/plan/apply` still auto-start it on demand for convenience. The Server owns the long-lived `ProjectSession`, which keeps JDT LS warm across `scan -> plan -> apply`.
 
 See [Voyager Server Mode.md](./Voyager%20Server%20Mode.md) for the detailed Server lifecycle.
 
@@ -63,7 +63,7 @@ See [Voyager Server Mode.md](./Voyager%20Server%20Mode.md) for the detailed Serv
 ```text
 src/
 ├── voyager_cmd/
-│   ├── main.py          # click CLI: serve/scan/plan/apply/status/stop
+│   ├── main.py          # click CLI: start/serve/scan/plan/apply/status/stop
 │   ├── server.py        # python -m voyager_cmd.server
 │   └── daemon.py        # legacy compatibility entrypoint
 ├── cli/commands/

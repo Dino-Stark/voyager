@@ -122,6 +122,7 @@ Voyager stores derived state under the scanned Java project:
 ## Main Commands
 
 ```bash
+voyager start [project_path]
 voyager serve [project_path]
 voyager scan <project_path>
 voyager plan rename <Class.field> <new_name>
@@ -130,7 +131,7 @@ voyager status
 voyager stop
 ```
 
-`scan/plan/apply` auto-start a Server for local usage. `serve` is useful when running Voyager as a long-lived backend for an IDE or Agent.
+`start` explicitly starts the project-scoped Server in the background. `scan/plan/apply` still auto-start a Server for local usage when needed. `serve` runs the Server in the foreground for debugging or supervised integrations.
 
 ---
 

@@ -43,17 +43,33 @@ This removes `examples/shop-dto/` contents, including any old `.voyager/` state,
 
 ---
 
-## Step 2: Scan
+## Step 2: Start Server
 
 ```bash
 cd examples/shop-dto
+voyager -v start .
+```
+
+Expected:
+
+- Voyager starts a project Server in the background.
+- JDT LS starts once inside that Server.
+- Server connection info is written to `.voyager/cache/server.json`.
+- No semantic graph is built yet; `start` only manages the Server lifecycle.
+
+`scan/plan/apply` still auto-start a Server if one is not running, but this manual flow uses `start` explicitly so Server lifecycle and project analysis are tested separately.
+
+---
+
+## Step 3: Scan
+
+```bash
 voyager -v scan .
 ```
 
 Expected:
 
-- Voyager auto-starts a project Server if one is not already running.
-- JDT LS starts once inside that Server.
+- Voyager reuses the project Server started in Step 2.
 - 4 Java classes are detected:
   - `OrderDTO`
   - `OrderService`
@@ -61,13 +77,12 @@ Expected:
   - `UserService`
 - 24 symbols are detected.
 - References are saved to `.voyager/graph.json`.
-- Server connection info is written to `.voyager/cache/server.json`.
 
 Current expected reference count is `14`, because the graph now records typed method calls in addition to type/parameter/field references.
 
 ---
 
-## Step 3: Plan Rename
+## Step 4: Plan Rename
 
 ```bash
 voyager plan rename UserDTO.userName customerName
@@ -86,7 +101,7 @@ The plan includes JavaBean accessor call sites such as `getUserName()` because J
 
 ---
 
-## Step 4: Apply
+## Step 5: Apply
 
 ```bash
 voyager apply -y
@@ -105,7 +120,7 @@ Operation applied successfully.
 
 ---
 
-## Step 5: Verify Source Changes
+## Step 6: Verify Source Changes
 
 `UserDTO.java`:
 
@@ -126,7 +141,7 @@ Known V1 behavior: the setter parameter can remain `String userName`. JDT LS ren
 
 ---
 
-## Step 6: Stop Server
+## Step 7: Stop Server
 
 ```bash
 voyager stop
@@ -140,7 +155,7 @@ Expected:
 
 ---
 
-## Step 7: Reset For Next Run
+## Step 8: Reset For Next Run
 
 From the Voyager repository root:
 

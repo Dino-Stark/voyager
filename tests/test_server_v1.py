@@ -18,6 +18,7 @@ class FakeProjectSession:
         self.project_path = project_path
         self.started = False
         self.closed = False
+        self.scan_calls = 0
 
     async def start(self) -> None:
         self.started = True
@@ -26,6 +27,7 @@ class FakeProjectSession:
         self.closed = True
 
     async def scan(self) -> dict:
+        self.scan_calls += 1
         return {
             "symbols_count": 1,
             "references_count": 0,
@@ -43,7 +45,9 @@ class FakeProjectSession:
         return ApplyResult(success=True, operation=operation, modified_files=["UserDTO.java"])
 
 
-def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _start_fake_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[VoyagerServer, threading.Thread, list[BaseException]]:
     monkeypatch.setattr("core.server.server.ProjectSession", FakeProjectSession)
 
     server = VoyagerServer(tmp_path)
@@ -68,10 +72,34 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
         time.sleep(0.05)
 
     assert ready.is_set()
+    return server, thread, errors
+
+
+def test_server_client_start_reuses_server_without_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    server, thread, errors = _start_fake_server(monkeypatch, tmp_path)
+
+    client = VoyagerServerClient(tmp_path, auto_start=False)
+    result = client.start()
+
+    assert result["running"] is True
+    assert server.session.started is True
+    assert server.session.scan_calls == 0
+    assert client.shutdown()["ok"] is True
+
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not errors
+
+
+def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    server, thread, errors = _start_fake_server(monkeypatch, tmp_path)
 
     client = VoyagerServerClient(tmp_path, auto_start=False)
     assert client.ping()["ok"] is True
     assert client.scan()["symbols_count"] == 1
+    assert server.session.scan_calls == 1
 
     operation = RenameFieldOperation(target="UserDTO.userName", to="customerName")
     assert client.plan(operation)["affected_files"] == ["UserDTO.java"]
@@ -81,4 +109,4 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     thread.join(timeout=5)
     assert not thread.is_alive()
     assert not errors
-    assert not server_info_path.exists()
+    assert not (tmp_path / ".voyager" / "cache" / "server.json").exists()

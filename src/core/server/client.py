@@ -42,6 +42,16 @@ class VoyagerServerClient:
     def scan(self) -> dict[str, Any]:
         return self._request("project/scan", {})
 
+    def start(self) -> dict[str, Any]:
+        """
+        Explicitly start or reuse the project-scoped Voyager server.
+
+        Unlike scan/plan/apply, this does not run a semantic project operation.
+        It only ensures the background server is alive and returns its status.
+        """
+        server_info = self._ensure_server(allow_start=True)
+        return self._request_with_server(server_info, "server/status", {})
+
     def plan(self, operation: Operation) -> dict[str, Any]:
         return self._request("operation/plan", {"operation": operation.model_dump(mode="json")})
 
@@ -107,7 +117,8 @@ class VoyagerServerClient:
             raise RuntimeError(error.get("message", "Voyager server request failed"))
         return response.get("result", {})
 
-    def _ensure_server(self) -> VoyagerServerInfo:
+    def _ensure_server(self, *, allow_start: bool | None = None) -> VoyagerServerInfo:
+        should_start = self.auto_start if allow_start is None else allow_start
         server_info = self._load_server_info()
         if server_info is not None:
             if self._ping_server(server_info):
@@ -117,7 +128,7 @@ class VoyagerServerClient:
                 self._shutdown_legacy_daemon(server_info)
 
         self.storage.clear_server_info()
-        if not self.auto_start:
+        if not should_start:
             raise RuntimeError("Voyager server is not running for this project")
 
         self._start_server()

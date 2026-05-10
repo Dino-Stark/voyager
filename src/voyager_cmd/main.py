@@ -1,6 +1,7 @@
 """Voyager CLI entry point.
 
 Usage:
+    voyager start [<project_path>]
     voyager serve [<project_path>]
     voyager scan <project_path>
     voyager plan rename <class.field> <new_name>
@@ -59,8 +60,8 @@ def serve(ctx: click.Context, project_path: str | None) -> None:
     """
     from pathlib import Path
 
-    root = Path(project_path or ".").resolve()
-    client = VoyagerServerClient(root, auto_start=False)
+    root: Path = Path(project_path or ".").resolve()
+    client: VoyagerServerClient = VoyagerServerClient(root, auto_start=False)
     try:
         status_result = client.status()
     except Exception:
@@ -79,6 +80,26 @@ def serve(ctx: click.Context, project_path: str | None) -> None:
 
         StorageManager(root).clear_server_info()
         console.print("\n[yellow]Voyager server stopped.[/yellow]")
+
+
+@cli.command()
+@click.argument("project_path", type=click.Path(exists=True, file_okay=False), required=False)
+@click.pass_context
+def start(ctx: click.Context, project_path: str | None) -> None:
+    """
+    Start the Voyager server in the background.
+    """
+    from pathlib import Path
+
+    root = Path(project_path or ".").resolve()
+    try:
+        result = VoyagerServerClient(root).start()
+    except Exception as exc:
+        console.print(f"[red]Failed to start Voyager server:[/red] {exc}")
+        sys.exit(1)
+
+    pid = result.get("pid", "unknown")
+    console.print(f"[green]Voyager server running[/green] for {root} [dim](pid {pid})[/dim]")
 
 
 @cli.command()

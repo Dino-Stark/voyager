@@ -38,6 +38,7 @@ python -m scripts.setup_jdtls --check
 ### 3. 分析项目
 
 ```bash
+voyager start /path/to/java/project
 voyager scan /path/to/java/project
 ```
 
@@ -59,7 +60,7 @@ voyager apply
 voyager stop
 ```
 
-`scan/plan/apply` 会自动启动项目级 Voyager Server。Server 会持有 JDTLS，避免每次命令都重复启动和关闭语言服务器。
+`voyager start` 会显式启动项目级后台 Server。`scan/plan/apply` 仍会在需要时自动启动 Server。Server 会持有 JDTLS，避免每次命令都重复启动和关闭语言服务器。
 
 ## JDTLS 安装说明
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Load Context V1"
+  short_description: "Load Voyager architecture docs and code context."
+  default_prompt: "Use $load-context-v1 to load the Voyager project context and summarize architecture, implementation gaps, and next steps."
