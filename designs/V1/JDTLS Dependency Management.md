@@ -79,11 +79,14 @@ cmd.exe /c <resolved launcher>
 JDT LS is no longer started once per CLI command. It is owned by the project-scoped Voyager Server.
 
 ```text
-voyager scan .
+voyager start .
   -> VoyagerServer starts
   -> ProjectSession.start()
   -> LspClient(Language.JAVA).start()
   -> JDT LS stays alive
+
+voyager scan .
+  -> reuse same Server and JDT LS
 
 voyager plan ...
   -> reuse same Server and JDT LS

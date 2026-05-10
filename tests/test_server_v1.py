@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -110,3 +111,52 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     assert not thread.is_alive()
     assert not errors
     assert not (tmp_path / ".voyager" / "cache" / "server.json").exists()
+
+
+def test_distinct_projects_use_distinct_servers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root_a = tmp_path / "project-a"
+    root_b = tmp_path / "project-b"
+    root_a.mkdir()
+    root_b.mkdir()
+
+    server_a, thread_a, errors_a = _start_fake_server(monkeypatch, root_a)
+    server_b, thread_b, errors_b = _start_fake_server(monkeypatch, root_b)
+
+    client_a = VoyagerServerClient(root_a, auto_start=False)
+    client_b = VoyagerServerClient(root_b, auto_start=False)
+
+    status_a = client_a.start()
+    status_b = client_b.start()
+
+    assert status_a["project_path"] == str(root_a.resolve())
+    assert status_b["project_path"] == str(root_b.resolve())
+    state_a = json.loads((root_a / ".voyager" / "cache" / "server.json").read_text())
+    state_b = json.loads((root_b / ".voyager" / "cache" / "server.json").read_text())
+    assert state_a["project_path"] == str(root_a.resolve())
+    assert state_b["project_path"] == str(root_b.resolve())
+    assert state_a["port"] != state_b["port"]
+    assert state_a["token"] != state_b["token"]
+    assert client_a.scan()["symbols_count"] == 1
+    assert client_b.scan()["symbols_count"] == 1
+    assert server_a.session.scan_calls == 1
+    assert server_b.session.scan_calls == 1
+
+    assert (root_a / ".voyager" / "cache" / "server.json").exists()
+    assert (root_b / ".voyager" / "cache" / "server.json").exists()
+
+    assert client_a.shutdown()["ok"] is True
+    thread_a.join(timeout=5)
+    assert not thread_a.is_alive()
+    assert not (root_a / ".voyager" / "cache" / "server.json").exists()
+    assert (root_b / ".voyager" / "cache" / "server.json").exists()
+    assert server_a.session.closed is True
+    assert server_b.session.closed is False
+    assert not errors_a
+
+    assert client_b.shutdown()["ok"] is True
+    thread_b.join(timeout=5)
+    assert not thread_b.is_alive()
+    assert not errors_b
+    assert not (root_b / ".voyager" / "cache" / "server.json").exists()

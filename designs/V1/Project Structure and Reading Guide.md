@@ -133,6 +133,8 @@ voyager stop
 
 `start` explicitly starts the project-scoped Server in the background. `scan/plan/apply` still auto-start a Server for local usage when needed. `serve` runs the Server in the foreground for debugging or supervised integrations.
 
+One project root maps to one Server process. Multiple terminals or conversations in the same project reuse that Server; different project roots use independent Server processes.
+
 ---
 
 ## Current V1 Limits

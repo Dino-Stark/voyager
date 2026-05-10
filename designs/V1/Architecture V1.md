@@ -103,6 +103,8 @@ All project-local derived state lives under the Java project root:
 
 JDT LS workspace data does not live inside the scanned project. `LspClient` stores it under the user cache directory, keyed by project path, to avoid JDT LS indexing its own workspace or `.voyager` state.
 
+One Java project root maps to one Voyager Server process. Multiple terminals or IDE conversations inside the same project reuse that Server via `.voyager/cache/server.json`. Different project roots run independent Server processes, with isolated JDT LS workspaces, graphs, pending plans, and operation logs.
+
 ---
 
 ## Scan

@@ -25,10 +25,14 @@ examples/
         OrderService.java
         UserDTO.java
         UserService.java
+    mini-customer/              <- 多项目隔离 smoke test fixture
+    mini-order/                 <- 多项目隔离 smoke test fixture
   shop-dto/                    <- 运行目录（会被修改）
     pom.xml
     src/main/java/com/shop/
       ...
+  mini-customer/               <- 运行目录（可重置）
+  mini-order/                  <- 运行目录（可重置）
   reset.py                     <- 重置脚本
   README.md
 ```

@@ -48,7 +48,13 @@ Server 是项目级别的：一个 Java project root 对应一个 Voyager Server
 
 ## 用户命令
 
-显式启动：
+显式后台启动：
+
+```bash
+voyager start [project_path]
+```
+
+显式前台运行：
 
 ```bash
 voyager serve [project_path]
@@ -57,6 +63,7 @@ voyager serve [project_path]
 普通本地使用时，`scan/plan/apply` 会自动启动 Server：
 
 ```bash
+voyager start .
 voyager scan .
 voyager plan rename UserDTO.userName customerName
 voyager apply -y
@@ -86,7 +93,7 @@ src/core/session/
 └── daemon.py           # 旧 daemon 名称兼容层
 
 src/voyager_cmd/
-├── main.py        # CLI: serve/scan/plan/apply/status/stop
+├── main.py        # CLI: start/serve/scan/plan/apply/status/stop
 ├── server.py      # python -m voyager_cmd.server 入口
 └── daemon.py      # 旧 daemon 入口兼容层
 ```
@@ -100,9 +107,8 @@ src/voyager_cmd/
 ### 1. 第一次 CLI 请求
 
 ```text
-voyager scan .
-  -> scan_project()
-  -> VoyagerServerClient(project_path).scan()
+voyager start .
+  -> VoyagerServerClient(project_path).start()
   -> read .voyager/cache/server.json
   -> no running server
   -> start background process:
@@ -120,6 +126,8 @@ voyager_cmd.server
   -> start local TCP server
   -> write .voyager/cache/server.json
 ```
+
+`scan/plan/apply` 仍然会在没有 Server 时自动启动项目级 Server；`start` 只是把这个生命周期动作显式化，不会构建 semantic graph。
 
 `ProjectSession` 是真正的长期状态容器：
 
@@ -330,9 +338,11 @@ voyager apply
 改造后：
 
 ```text
-voyager scan
+voyager start
   -> start Voyager Server
   -> start JDT LS once
+
+voyager scan
   -> scan
 
 voyager plan
@@ -407,6 +417,7 @@ python -m pytest -q
 ```bash
 python examples/reset.py shop-dto
 cd examples/shop-dto
+voyager -v start .
 voyager -v scan .
 voyager plan rename UserDTO.userName customerName
 voyager apply -y
@@ -415,7 +426,8 @@ voyager stop
 
 期望：
 
-- `scan` 自动启动 Server。
+- `start` 显式启动项目级 Server，后续 `scan/plan/apply` 复用同一个 Server。
+- 如果没有提前 `start`，`scan/plan/apply` 仍会自动启动当前项目的 Server。
 - `plan` 报 3 个 affected files：
   - `src/main/java/com/shop/OrderService.java`
   - `src/main/java/com/shop/UserDTO.java`
@@ -431,7 +443,7 @@ voyager stop
 
 - 增加 progress notification，用于长时间 scan/index。
 - 增加 cancel request，用于取消长任务。
-- 增加 project/open、project/close，支持一个 Server 管理多个 project。
+- 增加轻量级 registry/broker，便于 IDE/Agent 发现多个项目级 Server，但保持一个 project root 对应一个 Server 的隔离边界。
 - 为 IDE/Agent 暴露更稳定的 JSON-RPC schema。
 - 把 Server 集成测试扩展到真实 CLI 自动启动路径。
 

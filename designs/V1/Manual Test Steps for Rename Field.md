@@ -164,3 +164,83 @@ python examples/reset.py shop-dto
 ```
 
 This restores the example project to its original state and removes runtime `.voyager/` state.
+
+---
+
+## Multi-Project Isolation Smoke Test
+
+This verifies the V1 process model: one project root maps to one Voyager Server process. Multiple sessions in the same project should reuse a Server, while different projects should use independent Servers.
+
+From the Voyager repository root:
+
+```bash
+python examples/reset.py mini-customer
+python examples/reset.py mini-order
+```
+
+In two terminals, start both projects:
+
+```bash
+cd examples/mini-customer
+voyager -v start .
+```
+
+```bash
+cd examples/mini-order
+voyager -v start .
+```
+
+Expected:
+
+- The two commands report different Server pids.
+- Each project has its own `.voyager/cache/server.json`.
+- The two `server.json` files have different `pid`, `port`, `token`, and `project_path` values.
+
+Then run both project flows:
+
+```bash
+cd examples/mini-customer
+voyager -v scan .
+voyager plan rename CustomerDTO.userName customerName
+voyager apply -y
+```
+
+```bash
+cd examples/mini-order
+voyager -v scan .
+voyager plan rename OrderDTO.orderCode externalCode
+voyager apply -y
+```
+
+Expected:
+
+- `mini-customer` modifies only `CustomerDTO.java` and `CustomerService.java`.
+- `mini-order` modifies only `OrderDTO.java` and `OrderService.java`.
+- `voyager status` in both projects reports each project's own Server pid.
+
+Stop one project:
+
+```bash
+cd examples/mini-customer
+voyager stop
+```
+
+Expected:
+
+- `mini-customer/.voyager/cache/server.json` is removed.
+- `mini-order` still reports its own Server as running.
+
+Then stop the other project and reset:
+
+```bash
+cd ../mini-order
+voyager stop
+cd ../..
+python examples/reset.py mini-customer
+python examples/reset.py mini-order
+```
+
+Expected:
+
+- Both project-scoped Servers are stopped.
+- Both project-local `.voyager/cache/server.json` files are removed.

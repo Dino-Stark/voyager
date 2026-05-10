@@ -38,8 +38,9 @@ python -m scripts.setup_jdtls --check
 ### 3. 分析项目
 
 ```bash
-voyager start /path/to/java/project
-voyager scan /path/to/java/project
+cd /path/to/java/project
+voyager start .
+voyager scan .
 ```
 
 ### 4. 规划重命名
@@ -60,7 +61,7 @@ voyager apply
 voyager stop
 ```
 
-`voyager start` 会显式启动项目级后台 Server。`scan/plan/apply` 仍会在需要时自动启动 Server。Server 会持有 JDTLS，避免每次命令都重复启动和关闭语言服务器。
+`voyager start` 会显式启动当前项目的后台 Server。`scan/plan/apply` 仍会在需要时自动启动当前项目的 Server。每个 project root 对应一个 Server 进程和一个 JDTLS 会话；同一项目的多个终端/会话会复用同一个 Server，不同项目会使用不同 Server。
 
 ## JDTLS 安装说明
 
