@@ -2,6 +2,7 @@ package com.shop;
 
 public class OrderService {
     private UserDTO buyer;
+    private UserService userService = new UserService();
 
     public void createOrder(OrderDTO order, UserDTO user) {
         order.setOrderId("ORD-001");
@@ -12,5 +13,9 @@ public class OrderService {
 
     public String getBuyerName() {
         return buyer.getUserName();
+    }
+
+    public String getBuyerLabel(UserDTO user) {
+        return userService.formatDisplayName(user);
     }
 }

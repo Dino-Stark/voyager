@@ -125,7 +125,9 @@ Voyager stores derived state under the scanned Java project:
 voyager start [project_path]
 voyager serve [project_path]
 voyager scan <project_path>
-voyager plan rename <Class.field> <new_name>
+voyager plan rename_field <package.Class.field> <new_name>
+voyager plan rename_method <package.Class.method> <new_name>
+voyager plan rename_class <package.Class> <new_name>
 voyager apply -y
 voyager status
 voyager stop
@@ -140,7 +142,8 @@ One project root maps to one Server process. Multiple terminals or conversations
 ## Current V1 Limits
 
 - Only Java is implemented.
-- Only `rename_field` is fully implemented.
-- `apply rename_field` requires JDT LS.
+- `rename_field`, `rename_method`, and `rename_class` use the LSP rename pipeline.
+- Rename operation targets must use fully qualified class names.
+- Applying rename operations requires JDT LS.
 - Static parsing is intentionally conservative.
 - Full call graph, Spring DI, Lombok generated-code analysis, reflection, and dynamic proxies are out of V1 scope.

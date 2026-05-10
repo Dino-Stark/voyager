@@ -8,7 +8,14 @@ from pathlib import Path
 import yaml
 
 from core.graph.semantic_graph import RefType, SemanticGraph, SymbolType
-from core.operation.models import AddFieldOperation, Operation, RemoveFieldOperation, RenameFieldOperation
+from core.operation.models import (
+    AddFieldOperation,
+    Operation,
+    RemoveFieldOperation,
+    RenameClassOperation,
+    RenameFieldOperation,
+    RenameMethodOperation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +104,52 @@ class RuleValidator:
                     )
                 )
 
+        elif isinstance(operation, RenameMethodOperation):
+            matches = graph.find_methods(operation.class_name, operation.method_name)
+            if not matches:
+                violations.append(
+                    _violation(
+                        "symbol_not_found",
+                        f"Method '{operation.target}' was not found",
+                        operation.target,
+                    )
+                )
+            elif len(matches) > 1:
+                violations.append(
+                    _violation(
+                        "ambiguous_symbol",
+                        f"Method '{operation.target}' is overloaded; V1 rename_method needs an unambiguous method",
+                        operation.target,
+                    )
+                )
+            elif graph.find_methods(operation.class_name, operation.to):
+                violations.append(
+                    _violation(
+                        "symbol_already_exists",
+                        f"Method '{operation.class_name}.{operation.to}' already exists",
+                        f"{operation.class_name}.{operation.to}",
+                    )
+                )
+
+        elif isinstance(operation, RenameClassOperation):
+            class_symbol = graph.resolve_class(operation.class_name)
+            if class_symbol is None:
+                violations.append(
+                    _violation(
+                        "symbol_not_found",
+                        f"Class '{operation.class_name}' was not found",
+                        operation.class_name,
+                    )
+                )
+            elif graph.resolve_class(operation.new_class_name) is not None:
+                violations.append(
+                    _violation(
+                        "symbol_already_exists",
+                        f"Class '{operation.new_class_name}' already exists",
+                        operation.new_class_name,
+                    )
+                )
+
         elif isinstance(operation, AddFieldOperation):
             if graph.resolve_class(operation.class_name) is None:
                 violations.append(
@@ -166,6 +219,62 @@ class RuleValidator:
                     _violation(
                         "validation_failed",
                         f"Rename left references to old field '{operation.field_name}': {locations}",
+                        operation.target,
+                    )
+                )
+
+        elif isinstance(operation, RenameMethodOperation):
+            class_symbol = graph.resolve_class(operation.class_name)
+            old_target_id = (
+                f"{class_symbol.id}.{operation.method_name}" if class_symbol is not None else None
+            )
+            if graph.resolve_method(operation.class_name, operation.to) is None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: '{operation.class_name}.{operation.to}' not found after apply",
+                        operation.target,
+                    )
+                )
+            if graph.resolve_method(operation.class_name, operation.method_name) is not None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: old method '{operation.target}' still exists after apply",
+                        operation.target,
+                    )
+                )
+            unresolved_old_refs = [
+                ref
+                for ref in graph.references
+                if ref.ref_type == RefType.METHOD_CALL
+                and old_target_id is not None
+                and ref.to_symbol == old_target_id
+            ]
+            if unresolved_old_refs:
+                locations = sorted({f"{ref.file_path}:{ref.line}" for ref in unresolved_old_refs})
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename left references to old method '{operation.method_name}': {locations}",
+                        operation.target,
+                    )
+                )
+
+        elif isinstance(operation, RenameClassOperation):
+            if graph.resolve_class(operation.new_class_name) is None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: class '{operation.new_class_name}' not found after apply",
+                        operation.target,
+                    )
+                )
+            if graph.resolve_class(operation.class_name) is not None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Rename failed: old class '{operation.class_name}' still exists after apply",
                         operation.target,
                     )
                 )

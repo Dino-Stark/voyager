@@ -1,14 +1,16 @@
-# Manual Test Steps: shop-dto rename_field
+# Manual Test Steps: shop-dto rename operations
 
 ## Goal
 
-Verify that Voyager can rename `UserDTO.userName` to `customerName` across the example Java project through the current Server-based runtime.
+Verify that Voyager can rename Java fields, methods, and classes across the example project through the current Server-based runtime.
 
-Expected modified files:
+Supported rename operations in this flow:
 
-- `src/main/java/com/shop/OrderService.java`
-- `src/main/java/com/shop/UserDTO.java`
-- `src/main/java/com/shop/UserService.java`
+- `rename_field`: `com.shop.UserDTO.userName` -> `customerName`
+- `rename_method`: `com.shop.UserService.formatDisplayName` -> `formatCustomerLabel`
+- `rename_class`: `com.shop.UserDTO` -> `CustomerProfile`
+
+Each scenario starts from a fresh reset so the expected files are independent.
 
 ---
 
@@ -31,7 +33,9 @@ python -m scripts.setup_jdtls --check
 
 ---
 
-## Step 1: Reset the Example Project
+## Scenario A: rename_field
+
+### Step A1: Reset
 
 From the Voyager repository root:
 
@@ -39,11 +43,7 @@ From the Voyager repository root:
 python examples/reset.py shop-dto
 ```
 
-This removes `examples/shop-dto/` contents, including any old `.voyager/` state, then copies a fresh project from `examples/_sources/shop-dto/`.
-
----
-
-## Step 2: Start Server
+### Step A2: Start Server
 
 ```bash
 cd examples/shop-dto
@@ -55,13 +55,9 @@ Expected:
 - Voyager starts a project Server in the background.
 - JDT LS starts once inside that Server.
 - Server connection info is written to `.voyager/cache/server.json`.
-- No semantic graph is built yet; `start` only manages the Server lifecycle.
+- No semantic graph is built yet.
 
-`scan/plan/apply` still auto-start a Server if one is not running, but this manual flow uses `start` explicitly so Server lifecycle and project analysis are tested separately.
-
----
-
-## Step 3: Scan
+### Step A3: Scan
 
 ```bash
 voyager -v scan .
@@ -69,23 +65,19 @@ voyager -v scan .
 
 Expected:
 
-- Voyager reuses the project Server started in Step 2.
-- 4 Java classes are detected:
+- Voyager reuses the project Server.
+- 5 Java classes are detected:
   - `OrderDTO`
   - `OrderService`
   - `UserDTO`
+  - `UserDTOAudit`
   - `UserService`
-- 24 symbols are detected.
 - References are saved to `.voyager/graph.json`.
 
-Current expected reference count is `14`, because the graph now records typed method calls in addition to type/parameter/field references.
-
----
-
-## Step 4: Plan Rename
+### Step A4: Plan Field Rename
 
 ```bash
-voyager plan rename UserDTO.userName customerName
+voyager plan rename_field com.shop.UserDTO.userName customerName
 ```
 
 Expected:
@@ -99,9 +91,7 @@ Plan valid. 3 file(s) affected:
 
 The plan includes JavaBean accessor call sites such as `getUserName()` because JDT LS field rename will update them to `getCustomerName()`.
 
----
-
-## Step 5: Apply
+### Step A5: Apply
 
 ```bash
 voyager apply -y
@@ -116,11 +106,7 @@ Operation applied successfully.
   Modified: src\main\java\com\shop\UserService.java
 ```
 
-`-y` skips the confirmation prompt.
-
----
-
-## Step 6: Verify Source Changes
+### Step A6: Verify Source Changes
 
 `UserDTO.java`:
 
@@ -139,9 +125,7 @@ Operation applied successfully.
 
 Known V1 behavior: the setter parameter can remain `String userName`. JDT LS renames the field symbol and JavaBean accessor names, but the parameter is a local variable.
 
----
-
-## Step 7: Stop Server
+### Step A7: Stop Server
 
 ```bash
 voyager stop
@@ -155,7 +139,146 @@ Expected:
 
 ---
 
-## Step 8: Reset For Next Run
+## Scenario B: rename_method
+
+### Step B1: Reset
+
+From the Voyager repository root:
+
+```bash
+python examples/reset.py shop-dto
+cd examples/shop-dto
+```
+
+### Step B2: Scan
+
+`scan/plan/apply` can auto-start the Server, so this scenario does not require an explicit `start`.
+
+```bash
+voyager -v scan .
+```
+
+### Step B3: Plan Method Rename
+
+```bash
+voyager plan rename_method com.shop.UserService.formatDisplayName formatCustomerLabel
+```
+
+Expected:
+
+```text
+Plan valid. 2 file(s) affected:
+  - src/main/java/com/shop/OrderService.java
+  - src/main/java/com/shop/UserService.java
+```
+
+The method declaration lives in `UserService.java`; the typed call site lives in `OrderService.java`:
+
+```java
+userService.formatDisplayName(user)
+```
+
+### Step B4: Apply
+
+```bash
+voyager apply -y
+```
+
+Expected:
+
+```text
+Operation applied successfully.
+  Modified: src\main\java\com\shop\OrderService.java
+  Modified: src\main\java\com\shop\UserService.java
+```
+
+### Step B5: Verify Source Changes
+
+`UserService.java`:
+
+- `public String formatCustomerLabel(UserDTO user)`
+
+`OrderService.java`:
+
+- `return userService.formatCustomerLabel(user);`
+
+### Step B6: Stop Server
+
+```bash
+voyager stop
+```
+
+---
+
+## Scenario C: rename_class
+
+### Step C1: Reset
+
+From the Voyager repository root:
+
+```bash
+python examples/reset.py shop-dto
+cd examples/shop-dto
+```
+
+### Step C2: Scan
+
+```bash
+voyager -v scan .
+```
+
+### Step C3: Plan Class Rename
+
+```bash
+voyager plan rename_class com.shop.UserDTO CustomerProfile
+```
+
+Expected:
+
+```text
+Plan valid. 4 file(s) affected:
+  - src/main/java/com/shop/OrderService.java
+  - src/main/java/com/shop/UserDTO.java
+  - src/main/java/com/shop/UserDTOAudit.java
+  - src/main/java/com/shop/UserService.java
+```
+
+### Step C4: Apply
+
+```bash
+voyager apply -y
+```
+
+Expected:
+
+```text
+Operation applied successfully.
+  Modified: src\main\java\com\shop\OrderService.java
+  Modified: src\main\java\com\shop\CustomerProfile.java
+  Modified: src\main\java\com\shop\UserDTOAudit.java
+  Modified: src\main\java\com\shop\UserService.java
+```
+
+`rename_class` uses JDT LS semantic rename and then moves the Java source file when the file name matches the old public class name.
+
+### Step C5: Verify Source Changes
+
+Expected:
+
+- `src/main/java/com/shop/CustomerProfile.java` exists.
+- `src/main/java/com/shop/UserDTO.java` no longer exists.
+- `CustomerProfile.java` declares `public class CustomerProfile`.
+- `OrderService.java`, `UserDTOAudit.java`, and `UserService.java` use `CustomerProfile`.
+
+### Step C6: Stop Server
+
+```bash
+voyager stop
+```
+
+---
+
+## Reset For Next Run
 
 From the Voyager repository root:
 
@@ -201,14 +324,14 @@ Then run both project flows:
 ```bash
 cd examples/mini-customer
 voyager -v scan .
-voyager plan rename CustomerDTO.userName customerName
+voyager plan rename_field com.example.customer.CustomerDTO.userName customerName
 voyager apply -y
 ```
 
 ```bash
 cd examples/mini-order
 voyager -v scan .
-voyager plan rename OrderDTO.orderCode externalCode
+voyager plan rename_field com.example.order.OrderDTO.orderCode externalCode
 voyager apply -y
 ```
 

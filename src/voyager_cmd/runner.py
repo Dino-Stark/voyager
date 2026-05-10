@@ -8,7 +8,7 @@ Usage::
     from voyager_cmd.runner import VoyagerRunner
 
     runner = VoyagerRunner(project_path="examples/shop-dto")
-    runner.run_rename("OrderDTO.userId", "customerId")
+    runner.run_rename("com.shop.OrderDTO.userId", "customerId")
 """
 
 import logging
@@ -23,7 +23,9 @@ from core.operation.models import (
     ApplyResult,
     Operation,
     PlanResult,
+    RenameClassOperation,
     RenameFieldOperation,
+    RenameMethodOperation,
 )
 from storage.manager import StorageManager
 
@@ -162,7 +164,7 @@ class VoyagerRunner:
         End-to-end rename_field: scan (optional) → plan → apply (optional).
 
         Args:
-            target: Field spec in ``ClassName.fieldName`` format.
+            target: Field spec in ``package.ClassName.fieldName`` format.
             new_name: New field name.
             scan: Whether to scan first (default True).
             apply: Whether to apply after planning (default True).
@@ -171,6 +173,56 @@ class VoyagerRunner:
             The PlanResult (if apply=False) or ApplyResult (if apply=True).
         """
         operation = RenameFieldOperation(target=target, to=new_name)
+
+        if scan:
+            self.scan()
+
+        plan_result = self.plan(operation)
+        if not plan_result.is_valid:
+            return plan_result
+
+        if apply:
+            return self.apply(operation)
+
+        return plan_result
+
+    def run_rename_method(
+        self,
+        target: str,
+        new_name: str,
+        *,
+        scan: bool = True,
+        apply: bool = True,
+    ) -> ApplyResult | PlanResult:
+        """
+        End-to-end rename_method: scan (optional) -> plan -> apply (optional).
+        """
+        operation = RenameMethodOperation(target=target, to=new_name)
+
+        if scan:
+            self.scan()
+
+        plan_result = self.plan(operation)
+        if not plan_result.is_valid:
+            return plan_result
+
+        if apply:
+            return self.apply(operation)
+
+        return plan_result
+
+    def run_rename_class(
+        self,
+        target: str,
+        new_name: str,
+        *,
+        scan: bool = True,
+        apply: bool = True,
+    ) -> ApplyResult | PlanResult:
+        """
+        End-to-end rename_class: scan (optional) -> plan -> apply (optional).
+        """
+        operation = RenameClassOperation(target=target, to=new_name)
 
         if scan:
             self.scan()

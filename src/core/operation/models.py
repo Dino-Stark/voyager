@@ -10,17 +10,29 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+def _is_qualified_java_name(value: str) -> bool:
+    parts = value.split(".")
+    return len(parts) >= 2 and all(part.isidentifier() for part in parts)
+
+
+def _new_fqn(old_fqn: str, new_simple_name: str) -> str:
+    package, _, _ = old_fqn.rpartition(".")
+    return f"{package}.{new_simple_name}" if package else new_simple_name
+
+
 class OperationType(str, Enum):
     """
     All operation types understood by Voyager.
 
     Each value corresponds to a structured modification that Voyager can plan and apply.
-    Only ``rename_field`` is fully implemented in V1.
+    Rename operations are implemented through the same LSP-backed pipeline in V1.
     """
 
     ADD_FIELD = "add_field"
     REMOVE_FIELD = "remove_field"
     RENAME_FIELD = "rename_field"
+    RENAME_METHOD = "rename_method"
+    RENAME_CLASS = "rename_class"
     UPDATE_API = "update_api"
     ADD_FUNCTION = "add_function"
     UPDATE_FUNCTION_SIGNATURE = "update_function_signature"
@@ -40,22 +52,26 @@ class RenameFieldOperation(BaseModel):
 
     Attributes:
         op: Fixed to ``OperationType.RENAME_FIELD``.
-        target: Fully qualified field spec in ``ClassName.fieldName`` format.
+        target: Fully qualified field spec in ``package.ClassName.fieldName`` format.
         to: New field name (must be a valid Java identifier).
     """
 
     op: Literal[OperationType.RENAME_FIELD] = OperationType.RENAME_FIELD
     target: str = Field(
-        description="Target field in format 'ClassName.fieldName', e.g. 'OrderDTO.userId'"
+        description="Target field in format 'package.ClassName.fieldName', e.g. 'com.shop.UserDTO.userName'"
     )
     to: str = Field(description="New field name")
 
     @model_validator(mode="after")
     def validate_target_format(self) -> "RenameFieldOperation":
-        parts = self.target.split(".", 1)
+        parts = self.target.rsplit(".", 1)
         if len(parts) != 2 or not parts[0] or not parts[1]:
             raise ValueError(
-                f"Target must be in format 'ClassName.fieldName', got: '{self.target}'"
+                f"Target must be in format 'package.ClassName.fieldName', got: '{self.target}'"
+            )
+        if not _is_qualified_java_name(parts[0]) or not parts[1].isidentifier():
+            raise ValueError(
+                f"Target must use a fully qualified class name, got: '{self.target}'"
             )
         return self
 
@@ -67,17 +83,107 @@ class RenameFieldOperation(BaseModel):
 
     @property
     def class_name(self) -> str:
-        return self.target.split(".", 1)[0]
+        return self.target.rsplit(".", 1)[0]
 
     @property
     def field_name(self) -> str:
-        return self.target.split(".", 1)[1]
+        return self.target.rsplit(".", 1)[1]
 
     def reverse(self) -> "RenameFieldOperation":
         """
         Return the inverse operation for rollback.
         """
         return RenameFieldOperation(target=f"{self.class_name}.{self.to}", to=self.field_name)
+
+
+class RenameMethodOperation(BaseModel):
+    """
+    Rename a Java method.
+
+    V1 resolves methods by class plus simple method name. Overloaded methods are
+    intentionally rejected because the current graph does not persist signatures.
+    """
+
+    op: Literal[OperationType.RENAME_METHOD] = OperationType.RENAME_METHOD
+    target: str = Field(
+        description="Target method in format 'package.ClassName.methodName', e.g. 'com.shop.UserService.register'"
+    )
+    to: str = Field(description="New method name")
+
+    @model_validator(mode="after")
+    def validate_target_format(self) -> "RenameMethodOperation":
+        parts = self.target.rsplit(".", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError(
+                f"Target must be in format 'package.ClassName.methodName', got: '{self.target}'"
+            )
+        if not _is_qualified_java_name(parts[0]) or not parts[1].isidentifier():
+            raise ValueError(
+                f"Target must use a fully qualified class name, got: '{self.target}'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_new_name(self) -> "RenameMethodOperation":
+        if not self.to.isidentifier():
+            raise ValueError(f"New method name must be a valid identifier, got: '{self.to}'")
+        return self
+
+    @property
+    def class_name(self) -> str:
+        return self.target.rsplit(".", 1)[0]
+
+    @property
+    def method_name(self) -> str:
+        return self.target.rsplit(".", 1)[1]
+
+    def reverse(self) -> "RenameMethodOperation":
+        """
+        Return the inverse operation for rollback.
+        """
+        return RenameMethodOperation(target=f"{self.class_name}.{self.to}", to=self.method_name)
+
+
+class RenameClassOperation(BaseModel):
+    """
+    Rename a Java class.
+
+    The operation uses LSP rename for semantic references and, when the source
+    file follows the Java public-class naming convention, moves the file to the
+    new class name during commit.
+    """
+
+    op: Literal[OperationType.RENAME_CLASS] = OperationType.RENAME_CLASS
+    target: str = Field(description="Target fully qualified class name")
+    to: str = Field(description="New class name")
+
+    @model_validator(mode="after")
+    def validate_target_format(self) -> "RenameClassOperation":
+        if not _is_qualified_java_name(self.target):
+            raise ValueError(
+                f"Target class must be a fully qualified name, got: '{self.target}'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_new_name(self) -> "RenameClassOperation":
+        if not self.to.isidentifier():
+            raise ValueError(f"New class name must be a valid identifier, got: '{self.to}'")
+        return self
+
+    @property
+    def class_name(self) -> str:
+        return self.target
+
+    @property
+    def new_class_name(self) -> str:
+        return _new_fqn(self.target, self.to)
+
+    def reverse(self) -> "RenameClassOperation":
+        """
+        Return the inverse operation for rollback.
+        """
+        return RenameClassOperation(target=self.new_class_name, to=self.target.rsplit(".", 1)[-1])
 
 
 class AddFieldOperation(BaseModel):
@@ -152,7 +258,13 @@ class RemoveFieldOperation(BaseModel):
 
 
 # Union type for all supported operations
-Operation = RenameFieldOperation | AddFieldOperation | RemoveFieldOperation
+Operation = (
+    RenameFieldOperation
+    | RenameMethodOperation
+    | RenameClassOperation
+    | AddFieldOperation
+    | RemoveFieldOperation
+)
 
 
 class PlanResult(BaseModel):

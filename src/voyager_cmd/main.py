@@ -4,7 +4,9 @@ Usage:
     voyager start [<project_path>]
     voyager serve [<project_path>]
     voyager scan <project_path>
-    voyager plan rename <class.field> <new_name>
+    voyager plan rename_field <fqn.field> <new_name>
+    voyager plan rename_method <fqn.method> <new_name>
+    voyager plan rename_class <fqn> <new_name>
     voyager apply
     voyager status
     voyager stop
@@ -119,7 +121,12 @@ def scan(ctx: click.Context, project_path: str) -> None:
 
 
 @cli.command()
-@click.argument("op_type", type=click.Choice(["rename", "add_field", "remove_field"]))
+@click.argument(
+    "op_type",
+    type=click.Choice(
+        ["rename", "rename_field", "rename_method", "rename_class", "add_field", "remove_field"]
+    ),
+)
 @click.argument("target")
 @click.argument("value", required=False)
 @click.pass_context
@@ -207,7 +214,7 @@ if __name__ == "__main__":
     PROJECT = r"examples\shop-dto"
     # OPERATION: "rename" | "add_field" | "remove_field"
     OPERATION = "rename"
-    TARGET = "OrderDTO.userId"
+    TARGET = "com.shop.OrderDTO.userId"
     VALUE = "customerId"
 
     runner = VoyagerRunner(PROJECT)

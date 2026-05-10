@@ -10,7 +10,9 @@ from core.operation.models import (
     AddFieldOperation,
     Operation,
     RemoveFieldOperation,
+    RenameClassOperation,
     RenameFieldOperation,
+    RenameMethodOperation,
 )
 
 
@@ -65,6 +67,10 @@ def deserialize_operation(data: dict[str, Any]) -> Operation:
     op_type = data.get("op", "")
     if op_type == "rename_field":
         return RenameFieldOperation(**data)
+    if op_type == "rename_method":
+        return RenameMethodOperation(**data)
+    if op_type == "rename_class":
+        return RenameClassOperation(**data)
     if op_type == "add_field":
         return AddFieldOperation(**data)
     if op_type == "remove_field":

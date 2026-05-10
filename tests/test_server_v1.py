@@ -102,7 +102,7 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     assert client.scan()["symbols_count"] == 1
     assert server.session.scan_calls == 1
 
-    operation = RenameFieldOperation(target="UserDTO.userName", to="customerName")
+    operation = RenameFieldOperation(target="com.shop.UserDTO.userName", to="customerName")
     assert client.plan(operation)["affected_files"] == ["UserDTO.java"]
     assert client.apply(operation)["modified_files"] == ["UserDTO.java"]
     assert client.shutdown()["ok"] is True

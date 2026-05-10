@@ -24,3 +24,15 @@ python examples/reset.py
 ```
 
 This deletes all files in the runtime directory and copies fresh files from `_sources/`.
+
+## shop-dto rename scenarios
+
+The `shop-dto` fixture covers the V1 rename operations:
+
+```bash
+voyager plan rename_field com.shop.UserDTO.userName customerName
+voyager plan rename_method com.shop.UserService.formatDisplayName formatCustomerLabel
+voyager plan rename_class com.shop.UserDTO CustomerProfile
+```
+
+Run one scenario at a time from a fresh reset so each expected file list stays independent.

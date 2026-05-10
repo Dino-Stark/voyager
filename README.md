@@ -46,7 +46,7 @@ voyager scan .
 ### 4. 规划重命名
 
 ```bash
-voyager plan rename OrderDTO.userId customerId
+voyager plan rename_field com.example.OrderDTO.userId customerId
 ```
 
 ### 5. 执行修改

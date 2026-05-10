@@ -155,6 +155,31 @@ class SemanticGraph(BaseModel):
     def get_field_symbol(self, class_name: str, field_name: str) -> Symbol | None:
         return self.resolve_field(class_name, field_name)
 
+    def resolve_method(self, class_name: str, method_name: str) -> Symbol | None:
+        """
+        Resolve a method by class FQN/simple name and method name.
+
+        V1 does not persist method signatures, so overloaded methods are
+        ambiguous and intentionally do not resolve.
+        """
+        matches = self.find_methods(class_name, method_name)
+        return matches[0] if len(matches) == 1 else None
+
+    def find_methods(self, class_name: str, method_name: str) -> list[Symbol]:
+        """
+        Return all methods in a class with the given simple method name.
+        """
+        class_symbol = self.resolve_class(class_name)
+        if class_symbol is None:
+            return []
+        return [
+            symbol
+            for symbol in self.symbols
+            if symbol.type == SymbolType.METHOD
+            and symbol.parent_id == class_symbol.id
+            and symbol.name == method_name
+        ]
+
     def find_references_to(self, symbol_id: str) -> list[Reference]:
         return [ref for ref in self.references if ref.to_symbol == symbol_id]
 
@@ -181,6 +206,36 @@ class SemanticGraph(BaseModel):
             files.add(method.file_path)
             for ref in self.find_references_to(method.id):
                 files.add(ref.file_path)
+        return sorted(files)
+
+    def get_affected_files_for_method(self, class_name: str, method_name: str) -> list[str]:
+        """
+        Return files affected by a method operation.
+        """
+        method = self.resolve_method(class_name, method_name)
+        if method is None:
+            return []
+
+        files = {method.file_path}
+        for ref in self.find_references_to(method.id):
+            files.add(ref.file_path)
+        return sorted(files)
+
+    def get_affected_files_for_class(self, class_name: str) -> list[str]:
+        """
+        Return files affected by a class operation.
+        """
+        class_symbol = self.resolve_class(class_name)
+        if class_symbol is None:
+            return []
+
+        files = {class_symbol.file_path}
+        for ref in self.find_references_to(class_symbol.id):
+            files.add(ref.file_path)
+
+        for symbol in self.symbols:
+            if symbol.parent_id == class_symbol.id:
+                files.add(symbol.file_path)
         return sorted(files)
 
     def symbols_by_type(self, symbol_type: SymbolType) -> list[Symbol]:

@@ -3,7 +3,15 @@
 from pathlib import Path
 
 from rich.console import Console
-from core.operation.models import AddFieldOperation, Operation, PlanResult, RemoveFieldOperation, RenameFieldOperation
+from core.operation.models import (
+    AddFieldOperation,
+    Operation,
+    PlanResult,
+    RemoveFieldOperation,
+    RenameClassOperation,
+    RenameFieldOperation,
+    RenameMethodOperation,
+)
 from core.server.client import VoyagerServerClient
 from storage.manager import StorageManager
 
@@ -15,8 +23,8 @@ def plan_operation(op_type: str, target: str, value: str | None) -> object | Non
     Plan an operation and display affected files.
 
     Args:
-        op_type: Type of operation (rename, add_field, remove_field).
-        target: Target identifier (e.g. 'OrderDTO.userId').
+        op_type: Type of operation (rename, rename_field, rename_method, rename_class, add_field, remove_field).
+        target: Target identifier (e.g. 'com.shop.UserDTO.userName').
         value: New value (depends on op_type).
 
     Returns:
@@ -67,7 +75,27 @@ def _build_operation(op_type: str, target: str, value: str | None) -> Operation:
     if op_type == "rename":
         if not value:
             raise ValueError("'rename' requires a new name as the third argument")
+        if target.startswith("field:"):
+            return RenameFieldOperation(target=target.removeprefix("field:"), to=value)
+        if target.startswith("method:"):
+            return RenameMethodOperation(target=target.removeprefix("method:"), to=value)
+        if target.startswith("class:"):
+            return RenameClassOperation(target=target.removeprefix("class:"), to=value)
+        raise ValueError(
+            "'rename' requires a target prefix: field:<FQN.field>, method:<FQN.method>, or class:<FQN>"
+        )
+    elif op_type == "rename_field":
+        if not value:
+            raise ValueError("'rename_field' requires a new name as the third argument")
         return RenameFieldOperation(target=target, to=value)
+    elif op_type == "rename_method":
+        if not value:
+            raise ValueError("'rename_method' requires a new name as the third argument")
+        return RenameMethodOperation(target=target, to=value)
+    elif op_type == "rename_class":
+        if not value:
+            raise ValueError("'rename_class' requires a new name as the third argument")
+        return RenameClassOperation(target=target, to=value)
     elif op_type == "add_field":
         parts = target.split(".", 1)
         class_name = parts[0]

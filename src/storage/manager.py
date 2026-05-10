@@ -8,6 +8,7 @@ Manages the .voyager directory for persistent state:
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -193,7 +194,7 @@ class StorageManager:
         """
         Remove the legacy background session state.
         """
-        self.load_session_path().unlink(missing_ok=True)
+        _unlink_if_possible(self.load_session_path())
 
     def load_server_info(self) -> dict | None:
         """
@@ -220,5 +221,20 @@ class StorageManager:
         """
         Remove running Voyager server connection info.
         """
-        self.load_server_info_path().unlink(missing_ok=True)
+        _unlink_if_possible(self.load_server_info_path())
         self.clear_session()
+
+
+def _unlink_if_possible(path: Path, attempts: int = 5, delay: float = 0.05) -> None:
+    """
+    Best-effort unlink for cache files that may be cleared by another process.
+    """
+    for attempt in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                logger.debug("Could not remove cache file %s; another process may own it", path)
+                return
+            time.sleep(delay)

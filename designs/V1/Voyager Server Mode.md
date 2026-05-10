@@ -65,7 +65,7 @@ voyager serve [project_path]
 ```bash
 voyager start .
 voyager scan .
-voyager plan rename UserDTO.userName customerName
+voyager plan rename_field com.shop.UserDTO.userName customerName
 voyager apply -y
 voyager stop
 ```
@@ -138,7 +138,7 @@ voyager_cmd.server
 ### 3. 后续 CLI 请求
 
 ```text
-voyager plan rename UserDTO.userName customerName
+voyager plan rename_field com.shop.UserDTO.userName customerName
   -> read server.json
   -> ping server
   -> reuse existing Server and JDT LS
@@ -419,7 +419,7 @@ python examples/reset.py shop-dto
 cd examples/shop-dto
 voyager -v start .
 voyager -v scan .
-voyager plan rename UserDTO.userName customerName
+voyager plan rename_field com.shop.UserDTO.userName customerName
 voyager apply -y
 voyager stop
 ```

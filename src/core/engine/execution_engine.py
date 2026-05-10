@@ -22,7 +22,9 @@ from core.operation.models import (
     Operation,
     PlanResult,
     RemoveFieldOperation,
+    RenameClassOperation,
     RenameFieldOperation,
+    RenameMethodOperation,
 )
 from core.parser.java_parser import (
     parse_java_project,
@@ -58,6 +60,7 @@ class FilePatch:
     path: Path
     original: str
     modified: str
+    destination: Path | None = None
 
 
 class ExecutionEngine:
@@ -225,6 +228,8 @@ class ExecutionEngine:
                 )
 
             modified_files = self._commit(patches)
+            if any(patch.destination is not None for patch in patches):
+                new_graph = self.rebuild_graph_static()
             self.graph = new_graph
             self.storage.save_graph(new_graph)
             self.storage.log_operation(operation, modified_files)
@@ -254,6 +259,10 @@ class ExecutionEngine:
     ) -> list[FilePatch]:
         if isinstance(operation, RenameFieldOperation):
             return await self._build_rename_patches_async(graph, operation)
+        if isinstance(operation, RenameMethodOperation):
+            return await self._build_rename_method_patches_async(graph, operation)
+        if isinstance(operation, RenameClassOperation):
+            return await self._build_rename_class_patches_async(graph, operation)
         if isinstance(operation, AddFieldOperation):
             raise UnsupportedOperationError("add_field is declared but not implemented in V1")
         if isinstance(operation, RemoveFieldOperation):
@@ -268,9 +277,6 @@ class ExecutionEngine:
     async def _build_rename_patches_async(
         self, graph: SemanticGraph, operation: RenameFieldOperation
     ) -> list[FilePatch]:
-        # Currently only field rename is supported.  Class and method rename
-        # will follow the same pattern once RenameClassOperation / RenameMethodOperation
-        # are added to the Operation union type.
         field_symbol: Symbol = graph.resolve_field(operation.class_name, operation.field_name)
         if field_symbol is None:
             raise SymbolNotFoundError(operation.target)
@@ -286,17 +292,102 @@ class ExecutionEngine:
                 file_path=str(source_path),
             )
 
+        self._ensure_lsp_rename_available(operation, "rename_field")
+        return await self._build_lsp_rename_patches(
+            source_path, field_symbol, operation, self._lsp_client
+        )
+
+    async def _build_rename_method_patches_async(
+        self, graph: SemanticGraph, operation: RenameMethodOperation
+    ) -> list[FilePatch]:
+        method_symbol: Symbol = graph.resolve_method(operation.class_name, operation.method_name)
+        if method_symbol is None:
+            raise SymbolNotFoundError(operation.target)
+
+        source_path = self._project_file_path(method_symbol.file_path)
+        if not source_path.exists():
+            raise SymbolNotFoundError(operation.target, file_path=str(source_path))
+        if method_symbol.line <= 0 or method_symbol.column <= 0:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Target method has no source position; run scan again",
+                target=operation.target,
+                file_path=str(source_path),
+            )
+
+        self._ensure_lsp_rename_available(operation, "rename_method")
+        return await self._build_lsp_rename_patches(
+            source_path, method_symbol, operation, self._lsp_client
+        )
+
+    async def _build_rename_class_patches_async(
+        self, graph: SemanticGraph, operation: RenameClassOperation
+    ) -> list[FilePatch]:
+        class_symbol: Symbol = graph.resolve_class(operation.class_name)
+        if class_symbol is None:
+            raise SymbolNotFoundError(operation.target)
+
+        source_path = self._project_file_path(class_symbol.file_path)
+        if not source_path.exists():
+            raise SymbolNotFoundError(operation.target, file_path=str(source_path))
+        if class_symbol.line <= 0 or class_symbol.column <= 0:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Target class has no source position; run scan again",
+                target=operation.target,
+                file_path=str(source_path),
+            )
+
+        self._ensure_lsp_rename_available(operation, "rename_class")
+        patches = await self._build_lsp_rename_patches(
+            source_path, class_symbol, operation, self._lsp_client
+        )
+
+        old_simple_name = class_symbol.name
+        if source_path.name != f"{old_simple_name}.java":
+            return patches
+
+        destination = source_path.with_name(f"{operation.to}.java")
+        if destination == source_path:
+            return patches
+        self._assert_inside_project(destination)
+        if destination.exists():
+            raise EngineError(
+                ErrorType.WRITE_ERROR,
+                "Refusing to overwrite an existing Java file during class rename",
+                target=operation.target,
+                file_path=str(destination),
+            )
+
+        return [
+            FilePatch(
+                path=patch.path,
+                original=patch.original,
+                modified=patch.modified,
+                destination=destination if patch.path == source_path else patch.destination,
+            )
+            for patch in patches
+        ]
+
+    def _ensure_lsp_rename_available(self, operation: Operation, operation_name: str) -> None:
         # The language is hardcoded to Java.  Multi-language support requires:
         # 1. Detecting/persisting the project language(s) during scan.
         # 2. Looking up the per-file LSP config from the symbol's file extension.
         if get_language_config(Language.JAVA).find_server_command() is None:
             raise LspUnavailableError(
-                "rename_field requires jdtls on PATH so Voyager can use LSP semantic rename",
-                target=operation.target,
+                f"{operation_name} requires jdtls on PATH so Voyager can use LSP semantic rename",
+                target=_operation_target(operation),
             )
 
+    async def _build_lsp_rename_patches(
+        self,
+        source_path: Path,
+        symbol: Symbol,
+        operation: RenameFieldOperation | RenameMethodOperation | RenameClassOperation,
+        client: LspClient | None,
+    ) -> list[FilePatch]:
         workspace_edit = await self._request_lsp_rename(
-            source_path, field_symbol, operation, self._lsp_client
+            source_path, symbol, operation, client
         )
         if workspace_edit.is_empty:
             raise EngineError(
@@ -327,28 +418,28 @@ class ExecutionEngine:
     async def _request_lsp_rename(
         self,
         source_path: Path,
-        field_symbol: Any,
-        operation: RenameFieldOperation,
+        symbol: Any,
+        operation: RenameFieldOperation | RenameMethodOperation | RenameClassOperation,
         client: LspClient | None = None,
     ) -> LspWorkspaceEdit:
         if client is not None:
-            return await self._request_lsp_rename_with_client(source_path, field_symbol, operation, client)
+            return await self._request_lsp_rename_with_client(source_path, symbol, operation, client)
 
         async with LspClient(Language.JAVA, self.project_path) as client:
-            return await self._request_lsp_rename_with_client(source_path, field_symbol, operation, client)
+            return await self._request_lsp_rename_with_client(source_path, symbol, operation, client)
 
     async def _request_lsp_rename_with_client(
         self,
         source_path: Path,
-        field_symbol: Any,
-        operation: RenameFieldOperation,
+        symbol: Any,
+        operation: RenameFieldOperation | RenameMethodOperation | RenameClassOperation,
         client: LspClient,
     ) -> LspWorkspaceEdit:
         # Voyager's Symbol uses 1-based line/column (human-readable), but LSP uses
         # 0-based positions internally, so we subtract 1 for the protocol conversion.
         position = LspPosition(
-            line=field_symbol.line - 1,
-            character=field_symbol.column - 1,
+            line=symbol.line - 1,
+            character=symbol.column - 1,
         )
         rename_range = await client.prepare_rename(source_path, position)
         if rename_range is None:
@@ -363,6 +454,10 @@ class ExecutionEngine:
     def _compute_affected_files(self, graph: SemanticGraph, operation: Operation) -> list[str]:
         if isinstance(operation, RenameFieldOperation):
             return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
+        if isinstance(operation, RenameMethodOperation):
+            return graph.get_affected_files_for_method(operation.class_name, operation.method_name)
+        if isinstance(operation, RenameClassOperation):
+            return graph.get_affected_files_for_class(operation.class_name)
         if isinstance(operation, AddFieldOperation):
             symbol = graph.resolve_class(operation.class_name)
             return [symbol.file_path] if symbol else []
@@ -401,17 +496,33 @@ class ExecutionEngine:
         """
         backups = {patch.path: patch.original for patch in patches}
         modified: list[str] = []
+        moved: list[tuple[Path, Path]] = []
 
         try:
             for patch in patches:
                 self._assert_inside_project(patch.path)
-                patch.path.write_text(patch.modified, encoding="utf-8")
-                modified.append(str(patch.path.relative_to(self.project_path)))
+                write_path = patch.destination or patch.path
+                self._assert_inside_project(write_path)
+                write_path.write_text(patch.modified, encoding="utf-8")
+                if patch.destination is not None:
+                    moved.append((patch.path, patch.destination))
+                    patch.path.unlink()
+                modified.append(str(write_path.relative_to(self.project_path)))
             return modified
         except Exception as exc:
+            for original_path, destination in reversed(moved):
+                try:
+                    if destination.exists():
+                        destination.unlink()
+                    original_path.write_text(backups[original_path], encoding="utf-8")
+                except Exception as rollback_exc:
+                    logger.error("Rollback failed for moved file %s: %s", original_path, rollback_exc)
             for path, original in backups.items():
                 try:
-                    path.write_text(original, encoding="utf-8")
+                    if not path.exists():
+                        path.write_text(original, encoding="utf-8")
+                    else:
+                        path.write_text(original, encoding="utf-8")
                 except Exception as rollback_exc:
                     logger.error("Rollback failed for %s: %s", path, rollback_exc)
             if isinstance(exc, EngineError):

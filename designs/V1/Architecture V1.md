@@ -11,7 +11,7 @@ The implemented V1 operation is:
 ```json
 {
   "op": "rename_field",
-  "target": "UserDTO.userName",
+  "target": "com.shop.UserDTO.userName",
   "to": "customerName"
 }
 ```
@@ -132,7 +132,7 @@ This keeps `scan` useful even when JDT LS is not fully ready, while still using 
 ## Plan
 
 ```text
-voyager plan rename UserDTO.userName customerName
+voyager plan rename_field com.shop.UserDTO.userName customerName
   -> build RenameFieldOperation
   -> VoyagerServerClient.plan(operation)
   -> operation/plan

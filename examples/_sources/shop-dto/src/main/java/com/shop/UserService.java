@@ -7,6 +7,10 @@ public class UserService {
         user.setAge(25);
     }
 
+    public String formatDisplayName(UserDTO user) {
+        return user.getUserName() + " <" + user.getEmail() + ">";
+    }
+
     public void printInfo(UserDTO user) {
         System.out.println(user.getUserName());
         System.out.println(user.getEmail());
