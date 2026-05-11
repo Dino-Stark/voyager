@@ -9,6 +9,7 @@ from typing import Any
 from core.operation.models import (
     AddFieldOperation,
     Operation,
+    PatchOperation,
     RemoveFieldOperation,
     RenameClassOperation,
     RenameFieldOperation,
@@ -75,4 +76,6 @@ def deserialize_operation(data: dict[str, Any]) -> Operation:
         return AddFieldOperation(**data)
     if op_type == "remove_field":
         return RemoveFieldOperation(**data)
+    if op_type == "patch":
+        return PatchOperation(**data)
     raise ValueError(f"Unknown operation type: {op_type}")

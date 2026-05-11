@@ -20,9 +20,11 @@ from rich.logging import RichHandler
 from core.engine.execution_engine import ExecutionEngine
 from core.graph.semantic_graph import SymbolType
 from core.operation.models import (
+    AddFieldOperation,
     ApplyResult,
     Operation,
     PlanResult,
+    RemoveFieldOperation,
     RenameClassOperation,
     RenameFieldOperation,
     RenameMethodOperation,
@@ -223,6 +225,63 @@ class VoyagerRunner:
         End-to-end rename_class: scan (optional) -> plan -> apply (optional).
         """
         operation = RenameClassOperation(target=target, to=new_name)
+
+        if scan:
+            self.scan()
+
+        plan_result = self.plan(operation)
+        if not plan_result.is_valid:
+            return plan_result
+
+        if apply:
+            return self.apply(operation)
+
+        return plan_result
+
+    def run_add_field(
+        self,
+        class_name: str,
+        field_name: str,
+        field_type: str = "String",
+        default_value: str | None = None,
+        *,
+        scan: bool = True,
+        apply: bool = True,
+    ) -> ApplyResult | PlanResult:
+        """
+        End-to-end add_field: scan (optional) -> plan -> apply (optional).
+        """
+        operation = AddFieldOperation(
+            target=class_name,
+            field_name=field_name,
+            field_type=field_type,
+            default_value=default_value,
+        )
+
+        if scan:
+            self.scan()
+
+        plan_result = self.plan(operation)
+        if not plan_result.is_valid:
+            return plan_result
+
+        if apply:
+            return self.apply(operation)
+
+        return plan_result
+
+    def run_remove_field(
+        self,
+        class_name: str,
+        field_name: str,
+        *,
+        scan: bool = True,
+        apply: bool = True,
+    ) -> ApplyResult | PlanResult:
+        """
+        End-to-end remove_field: scan (optional) -> plan -> apply (optional).
+        """
+        operation = RemoveFieldOperation(target=class_name, field_name=field_name)
 
         if scan:
             self.scan()

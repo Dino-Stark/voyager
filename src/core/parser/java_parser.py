@@ -222,17 +222,27 @@ def parse_java_project_static_with_overrides(
     project_path = project_path.resolve()
     normalized = {path.resolve(): content for path, content in file_overrides.items()}
     classes: list[JavaClass] = []
-    for file_path in sorted(project_path.rglob("*.java")):
+    java_files = {
+        file_path.resolve()
+        for file_path in project_path.rglob("*.java")
+        if not _is_ignored_path(file_path)
+    }
+    java_files.update(
+        path
+        for path in normalized
+        if path.suffix == ".java" and not _is_ignored_path(path)
+    )
+
+    for file_path in sorted(java_files):
         if _is_ignored_path(file_path):
             continue
-        resolved = file_path.resolve()
         try:
-            if resolved in normalized:
-                classes.extend(parse_java_source(resolved, normalized[resolved]))
+            if file_path in normalized:
+                classes.extend(parse_java_source(file_path, normalized[file_path]))
             else:
-                classes.extend(parse_java_file(resolved))
+                classes.extend(parse_java_file(file_path))
         except Exception as exc:
-            logger.warning("Failed to parse %s: %s", resolved, exc)
+            logger.warning("Failed to parse %s: %s", file_path, exc)
     return classes
 
 

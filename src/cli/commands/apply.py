@@ -9,6 +9,7 @@ from core.operation.models import (
     AddFieldOperation,
     ApplyResult,
     Operation,
+    PatchOperation,
     RemoveFieldOperation,
     RenameClassOperation,
     RenameFieldOperation,
@@ -97,5 +98,7 @@ def _deserialize_operation(data: dict) -> Operation:
         return AddFieldOperation(**data)
     elif op_type == "remove_field":
         return RemoveFieldOperation(**data)
+    elif op_type == "patch":
+        return PatchOperation(**data)
     else:
         raise ValueError(f"Unknown operation type: {op_type}")

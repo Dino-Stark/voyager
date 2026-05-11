@@ -124,17 +124,26 @@ def scan(ctx: click.Context, project_path: str) -> None:
 @click.argument(
     "op_type",
     type=click.Choice(
-        ["rename", "rename_field", "rename_method", "rename_class", "add_field", "remove_field"]
+        [
+            "rename",
+            "rename_field",
+            "rename_method",
+            "rename_class",
+            "add_field",
+            "remove_field",
+            "patch",
+        ]
     ),
 )
 @click.argument("target")
 @click.argument("value", required=False)
+@click.argument("extra", nargs=-1)
 @click.pass_context
-def plan(ctx: click.Context, op_type: str, target: str, value: str | None) -> None:
+def plan(ctx: click.Context, op_type: str, target: str, value: str | None, extra: tuple[str, ...]) -> None:
     """
     Plan an operation and show affected files.
     """
-    result = plan_operation(op_type, target, value)
+    result = plan_operation(op_type, target, value, list(extra))
     if result is None:
         sys.exit(1)
 
@@ -208,6 +217,10 @@ def stop(ctx: click.Context) -> None:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        cli()
+        sys.exit(0)
+
     # ── IDE / script mode: edit the values below and run directly ──────────
     from voyager_cmd.runner import VoyagerRunner
 
@@ -222,17 +235,14 @@ if __name__ == "__main__":
     if OPERATION == "rename":
         runner.run_rename(TARGET, VALUE)
     elif OPERATION in ("add_field", "remove_field"):
-        runner.scan()
-        from core.operation.models import AddFieldOperation, RemoveFieldOperation
-
         if OPERATION == "add_field":
-            op = AddFieldOperation(target=TARGET.split(".", 1)[0], field_name=VALUE)
+            runner.run_add_field(TARGET, VALUE)
         else:
-            parts = TARGET.split(".", 1)
-            op = RemoveFieldOperation(target=parts[0], field_name=parts[1])
-        plan_result = runner.plan(op)
-        if plan_result.is_valid:
-            runner.apply(op)
+            parts = TARGET.rsplit(".", 1)
+            if len(parts) != 2:
+                console.print("[red]remove_field TARGET must be package.Class.field[/red]")
+                sys.exit(1)
+            runner.run_remove_field(parts[0], parts[1])
     else:
         # Fallback: run the CLI
         cli()

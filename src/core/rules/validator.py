@@ -7,10 +7,11 @@ from pathlib import Path
 
 import yaml
 
-from core.graph.semantic_graph import RefType, SemanticGraph, SymbolType
+from core.graph.semantic_graph import RefType, Reference, SemanticGraph, SymbolType
 from core.operation.models import (
     AddFieldOperation,
     Operation,
+    PatchOperation,
     RemoveFieldOperation,
     RenameClassOperation,
     RenameFieldOperation,
@@ -167,9 +168,25 @@ class RuleValidator:
                         f"{operation.class_name}.{operation.field_name}",
                     )
                 )
+            else:
+                accessor_conflicts = _existing_accessor_conflicts(
+                    graph,
+                    operation.class_name,
+                    operation.field_name,
+                    operation.field_type,
+                )
+                if accessor_conflicts:
+                    violations.append(
+                        _violation(
+                            "symbol_already_exists",
+                            f"Accessor method(s) already exist: {sorted(accessor_conflicts)}",
+                            operation.class_name,
+                        )
+                    )
 
         elif isinstance(operation, RemoveFieldOperation):
-            if graph.resolve_field(operation.class_name, operation.field_name) is None:
+            field = graph.resolve_field(operation.class_name, operation.field_name)
+            if field is None:
                 violations.append(
                     _violation(
                         "symbol_not_found",
@@ -177,6 +194,37 @@ class RuleValidator:
                         f"{operation.class_name}.{operation.field_name}",
                     )
                 )
+            else:
+                external_refs = [
+                    ref
+                    for ref in graph.find_references_to(field.id)
+                    if ref.ref_type == RefType.FIELD_ACCESS and ref.file_path != field.file_path
+                ]
+                if external_refs:
+                    locations = sorted({f"{ref.file_path}:{ref.line}" for ref in external_refs})
+                    violations.append(
+                        _violation(
+                            "validation_failed",
+                            f"Cannot remove field with external field access references: {locations}",
+                            f"{operation.class_name}.{operation.field_name}",
+                        )
+                    )
+                accessor_refs = _external_accessor_references(
+                    graph,
+                    operation.class_name,
+                    operation.field_name,
+                    str(field.extra.get("type_name", "")),
+                    field.file_path,
+                )
+                if accessor_refs:
+                    locations = sorted({f"{ref.file_path}:{ref.line}" for ref in accessor_refs})
+                    violations.append(
+                        _violation(
+                            "validation_failed",
+                            f"Cannot remove field with external accessor references: {locations}",
+                            f"{operation.class_name}.{operation.field_name}",
+                        )
+                    )
 
         violations.extend(self._check_custom_rules(graph))
         return violations
@@ -279,6 +327,60 @@ class RuleValidator:
                     )
                 )
 
+        elif isinstance(operation, AddFieldOperation):
+            field = graph.resolve_field(operation.class_name, operation.field_name)
+            if field is None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Add failed: field '{operation.class_name}.{operation.field_name}' not found after apply",
+                        f"{operation.class_name}.{operation.field_name}",
+                    )
+                )
+            for method_name in _accessor_names(operation.field_name, operation.field_type):
+                if graph.resolve_method(operation.class_name, method_name) is None:
+                    violations.append(
+                        _violation(
+                            "validation_failed",
+                            f"Add failed: accessor '{operation.class_name}.{method_name}' not found after apply",
+                            f"{operation.class_name}.{method_name}",
+                        )
+                    )
+
+        elif isinstance(operation, RemoveFieldOperation):
+            field = graph.resolve_field(operation.class_name, operation.field_name)
+            if field is not None:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Remove failed: field '{operation.class_name}.{operation.field_name}' still exists after apply",
+                        f"{operation.class_name}.{operation.field_name}",
+                    )
+                )
+            for method_name in _accessor_names(operation.field_name):
+                if graph.resolve_method(operation.class_name, method_name) is not None:
+                    violations.append(
+                        _violation(
+                            "validation_failed",
+                            f"Remove failed: accessor '{operation.class_name}.{method_name}' still exists after apply",
+                            f"{operation.class_name}.{method_name}",
+                        )
+                    )
+
+        elif isinstance(operation, PatchOperation):
+            try:
+                from core.diff.patch_engine import parse_unified_patch
+
+                parse_unified_patch(operation.patch)
+            except Exception as exc:
+                violations.append(
+                    _violation(
+                        "validation_failed",
+                        f"Patch is invalid: {exc}",
+                        operation.description,
+                    )
+                )
+
         violations.extend(self._check_custom_rules(graph))
         return violations
 
@@ -376,3 +478,61 @@ def _violation(
     if target:
         result["target"] = target
     return result
+
+
+def _existing_accessor_conflicts(
+    graph: SemanticGraph, class_name: str, field_name: str, field_type: str
+) -> set[str]:
+    """
+    Return generated accessor names that already exist on the target class.
+    """
+    return {
+        name
+        for name in _accessor_names(field_name, field_type)
+        if graph.resolve_method(class_name, name) is not None
+    }
+
+
+def _accessor_names(field_name: str, field_type: str = "") -> set[str]:
+    """
+    Return JavaBean accessor method names for a field.
+    """
+    suffix = _java_bean_suffix(field_name)
+    if not field_type.strip():
+        return {f"get{suffix}", f"is{suffix}", f"set{suffix}"}
+    getter = f"is{suffix}" if field_type.strip() in {"boolean", "Boolean"} else f"get{suffix}"
+    return {getter, f"set{suffix}"}
+
+
+def _external_accessor_references(
+    graph: SemanticGraph,
+    class_name: str,
+    field_name: str,
+    field_type: str,
+    field_file_path: str,
+) -> list[Reference]:
+    """
+    Return method-call references to a field's accessors outside the declaring file.
+    """
+    references: list[Reference] = []
+    for method_name in _accessor_names(field_name, field_type):
+        method = graph.resolve_method(class_name, method_name)
+        if method is None:
+            continue
+        references.extend(
+            ref
+            for ref in graph.find_references_to(method.id)
+            if ref.ref_type == RefType.METHOD_CALL and ref.file_path != field_file_path
+        )
+    return references
+
+
+def _java_bean_suffix(name: str) -> str:
+    """
+    Convert a field name to the JavaBean accessor suffix.
+    """
+    if not name:
+        return ""
+    if len(name) > 1 and name[0].islower() and name[1].isupper():
+        return name
+    return name[:1].upper() + name[1:]

@@ -6,7 +6,7 @@ Voyager V1 solves one narrow problem:
 
 > Safely rename a Java DTO/POJO field and keep all related source files consistent.
 
-The implemented V1 operation is:
+The LSP-backed rename operation is:
 
 ```json
 {
@@ -16,7 +16,42 @@ The implemented V1 operation is:
 }
 ```
 
-`add_field` and `remove_field` exist as operation models, but the execution engine rejects them in V1.
+V1 also supports conservative static source edits for fields:
+
+```json
+{
+  "op": "add_field",
+  "target": "com.shop.OrderDTO",
+  "field_name": "giftMessage",
+  "field_type": "String"
+}
+```
+
+```json
+{
+  "op": "remove_field",
+  "target": "com.shop.OrderDTO",
+  "field_name": "giftMessage"
+}
+```
+
+`add_field` adds a private field plus JavaBean getter/setter methods. `remove_field`
+removes the field and its conventional JavaBean accessor methods, but rejects the
+operation when the field or accessors have external typed references.
+
+V1 also supports agent-friendly unified diff patches:
+
+```json
+{
+  "op": "patch",
+  "patch": "--- a/src/main/java/com/shop/OrderDTO.java\n+++ b/src/main/java/com/shop/OrderDTO.java\n@@ ...\n"
+}
+```
+
+`patch` is intended for CLI-first coding-agent workflows. It parses a unified
+diff, validates that all target paths stay inside the project, applies hunks in
+memory, supports file creation/deletion, rebuilds the graph, and commits
+atomically through the same engine path.
 
 ---
 
@@ -133,12 +168,13 @@ This keeps `scan` useful even when JDT LS is not fully ready, while still using 
 
 ```text
 voyager plan rename_field com.shop.UserDTO.userName customerName
-  -> build RenameFieldOperation
+voyager plan patch agent.patch
+  -> build Operation model
   -> VoyagerServerClient.plan(operation)
   -> operation/plan
   -> ExecutionEngine.plan_async()
   -> RuleValidator.validate_pre()
-  -> SemanticGraph.get_affected_files_for_field()
+  -> compute affected files
   -> save .voyager/pending_plan.json
 ```
 
@@ -152,6 +188,8 @@ For `rename_field`, affected-file calculation includes:
 - typed method-call references to those accessors.
 
 This makes `plan` align better with what JDT LS will actually modify during rename.
+
+For `patch`, affected-file calculation comes from the unified diff file headers.
 
 ---
 
@@ -172,7 +210,18 @@ voyager apply -y
   -> save graph and operation log
 ```
 
-`rename_field` must use JDT LS `textDocument/rename`. Voyager deliberately does not fall back to string replacement for apply.
+`rename_field`, `rename_method`, and `rename_class` must use JDT LS
+`textDocument/rename`. Voyager deliberately does not fall back to string
+replacement for rename apply.
+
+`add_field` and `remove_field` do not require JDT LS for apply. They are static
+single-class source edits that still use the same pre-validation, in-memory graph
+rebuild, post-validation, atomic commit, graph persistence, and operation log
+pipeline as rename operations.
+
+`patch` also does not require JDT LS for patch construction. It is a structured
+operation around unified diff text, designed for coding agents that naturally
+produce patches from CLI workflows.
 
 ---
 
@@ -213,6 +262,7 @@ The graph on disk is updated only after successful commit.
 V1 intentionally does not implement:
 
 - full call graph,
+- unsafe field removal when external references still exist,
 - multi-language support,
 - reflection or dynamic proxy analysis,
 - Lombok generated-code analysis,
@@ -221,3 +271,25 @@ V1 intentionally does not implement:
 - multi-agent planning.
 
 These can be future features, but V1 stays narrow so the rename pipeline remains testable and reliable.
+
+---
+
+## Future Direction
+
+Voyager should avoid growing into a thick PSI-like editing layer. Coding agents
+prefer CLI-first patch workflows, and reimplementing a lightweight IDE editing
+engine would add complexity without matching how agents naturally modify code.
+
+The preferred roadmap is:
+
+1. Strengthen `patch` as the primary agent-facing edit operation.
+2. Add explicit `add_file`, `remove_file`, and `move_file` operations.
+3. Improve semantic graph query capabilities so agents can inspect symbols,
+   references, and affected files before producing patches.
+4. Keep LSP-backed rename operations as high-value semantic exceptions.
+5. Pause expansion of complex PSI-like edit operations, such as broad automatic
+   field removal or method-body rewrites.
+
+In this model, Voyager helps agents see code structure, constrain risky edits,
+validate patches, commit atomically, rebuild the graph, and roll back safely.
+Agents remain responsible for producing the actual code changes.

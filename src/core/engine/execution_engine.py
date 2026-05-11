@@ -1,6 +1,7 @@
 """Execution engine for Voyager's semantic operations."""
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from core.operation.models import (
     AddFieldOperation,
     ApplyResult,
     Operation,
+    PatchOperation,
     PlanResult,
     RemoveFieldOperation,
     RenameClassOperation,
@@ -32,6 +34,12 @@ from core.parser.java_parser import (
     parse_java_project_static_with_overrides,
 )
 from core.rules.validator import RuleValidator
+from core.diff.patch_engine import (
+    ParsedPatchFile,
+    PatchParseError,
+    apply_parsed_patch,
+    parse_unified_patch,
+)
 from storage.manager import StorageManager
 from utils.async_helpers import run_async
 
@@ -61,6 +69,8 @@ class FilePatch:
     original: str
     modified: str
     destination: Path | None = None
+    exists: bool = True
+    delete: bool = False
 
 
 class ExecutionEngine:
@@ -73,8 +83,9 @@ class ExecutionEngine:
     1. :meth:`plan` -- validate pre-conditions against the current graph
     2. :meth:`apply` -- build patches, re-validate, commit
 
-    Rename requires JDT LS and goes through the full pipeline.  All other
-    operations are rejected if the required tooling is unavailable.
+    Rename requires JDT LS and goes through the full pipeline. Field add/remove
+    operations use conservative static source patches and the same validation
+    and commit stages.
     """
 
     def __init__(self, project_path: Path, storage: StorageManager | None = None) -> None:
@@ -228,7 +239,7 @@ class ExecutionEngine:
                 )
 
             modified_files = self._commit(patches)
-            if any(patch.destination is not None for patch in patches):
+            if any(patch.destination is not None or patch.delete for patch in patches):
                 new_graph = self.rebuild_graph_static()
             self.graph = new_graph
             self.storage.save_graph(new_graph)
@@ -264,9 +275,11 @@ class ExecutionEngine:
         if isinstance(operation, RenameClassOperation):
             return await self._build_rename_class_patches_async(graph, operation)
         if isinstance(operation, AddFieldOperation):
-            raise UnsupportedOperationError("add_field is declared but not implemented in V1")
+            return self._build_add_field_patches(graph, operation)
         if isinstance(operation, RemoveFieldOperation):
-            raise UnsupportedOperationError("remove_field is declared but not implemented in V1")
+            return self._build_remove_field_patches(graph, operation)
+        if isinstance(operation, PatchOperation):
+            return self._build_patch_operation_patches(operation)
         raise UnsupportedOperationError(f"Unsupported operation: {operation}")
 
     def _build_rename_patches(
@@ -369,6 +382,161 @@ class ExecutionEngine:
             for patch in patches
         ]
 
+    def _build_add_field_patches(
+        self, graph: SemanticGraph, operation: AddFieldOperation
+    ) -> list[FilePatch]:
+        """
+        Build a source patch that adds a private field plus JavaBean accessors.
+
+        Add/remove operations are static source edits in V1. They still reuse the
+        same engine transaction, graph rebuild, post-validation, and commit path
+        as LSP-backed rename operations.
+        """
+        class_symbol = graph.resolve_class(operation.class_name)
+        if class_symbol is None:
+            raise SymbolNotFoundError(operation.class_name)
+
+        source_path = self._project_file_path(class_symbol.file_path)
+        if not source_path.exists():
+            raise SymbolNotFoundError(operation.class_name, file_path=str(source_path))
+
+        original = source_path.read_text(encoding="utf-8")
+        body_range = _find_class_body_range(original, class_symbol.name)
+        if body_range is None:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Could not locate target class body",
+                target=operation.class_name,
+                file_path=str(source_path),
+            )
+
+        line_sep = _line_separator(original)
+        member_indent = _detect_member_indent(original, body_range.start, body_range.end)
+        field_insert = _field_insert_offset(original, graph, class_symbol.id, body_range)
+        accessor_insert = _accessor_insert_offset(original, body_range)
+        field_text = _build_field_declaration(operation, member_indent, line_sep)
+        accessor_text = _build_accessor_methods(operation, member_indent, line_sep)
+
+        modified = original
+        modified = modified[:accessor_insert] + accessor_text + modified[accessor_insert:]
+        modified = modified[:field_insert] + field_text + modified[field_insert:]
+
+        return [FilePatch(path=source_path, original=original, modified=modified)]
+
+    def _build_remove_field_patches(
+        self, graph: SemanticGraph, operation: RemoveFieldOperation
+    ) -> list[FilePatch]:
+        """
+        Build a source patch that removes a field and its JavaBean accessors.
+        """
+        field_symbol = graph.resolve_field(operation.class_name, operation.field_name)
+        if field_symbol is None:
+            raise SymbolNotFoundError(f"{operation.class_name}.{operation.field_name}")
+
+        source_path = self._project_file_path(field_symbol.file_path)
+        if not source_path.exists():
+            raise SymbolNotFoundError(operation.target, file_path=str(source_path))
+
+        original = source_path.read_text(encoding="utf-8")
+        ranges: list[SourceRange] = []
+        field_range = _field_declaration_range(original, field_symbol)
+        if field_range is None:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Could not locate target field declaration",
+                target=f"{operation.class_name}.{operation.field_name}",
+                file_path=str(source_path),
+            )
+        ranges.append(field_range)
+
+        for method_symbol in _bean_accessor_symbols(graph, field_symbol):
+            method_range = _method_declaration_range(original, method_symbol)
+            if method_range is not None:
+                ranges.append(method_range)
+
+        modified = _remove_source_ranges(original, ranges)
+        if original == modified:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "remove_field produced no source changes",
+                target=f"{operation.class_name}.{operation.field_name}",
+            )
+        return [FilePatch(path=source_path, original=original, modified=modified)]
+
+    def _build_patch_operation_patches(self, operation: PatchOperation) -> list[FilePatch]:
+        """
+        Build file patches from a unified diff operation.
+        """
+        try:
+            parsed_files = parse_unified_patch(operation.patch)
+        except PatchParseError as exc:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                str(exc),
+                target=operation.description,
+            ) from exc
+
+        patches: list[FilePatch] = []
+        for patch_file in parsed_files:
+            patches.append(self._build_single_unified_diff_patch(patch_file, operation))
+        return patches
+
+    def _build_single_unified_diff_patch(
+        self, patch_file: ParsedPatchFile, operation: PatchOperation
+    ) -> FilePatch:
+        """
+        Convert one parsed unified diff file section to a FilePatch.
+        """
+        target_path = (self.project_path / patch_file.target_path).resolve()
+        self._assert_inside_project(target_path)
+
+        if patch_file.is_new_file:
+            if target_path.exists():
+                raise EngineError(
+                    ErrorType.WRITE_ERROR,
+                    "Patch creates a file that already exists",
+                    target=operation.description,
+                    file_path=str(target_path),
+                )
+            original = ""
+            exists = False
+        else:
+            if not target_path.exists():
+                raise EngineError(
+                    ErrorType.WRITE_ERROR,
+                    "Patch targets a missing file",
+                    target=operation.description,
+                    file_path=str(target_path),
+                )
+            original = target_path.read_text(encoding="utf-8")
+            exists = True
+
+        try:
+            modified = apply_parsed_patch(original, patch_file)
+        except PatchParseError as exc:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                str(exc),
+                target=operation.description,
+                file_path=str(target_path),
+            ) from exc
+
+        if patch_file.is_deleted_file and modified:
+            raise EngineError(
+                ErrorType.VALIDATION_FAILED,
+                "Deleted-file patch did not remove all file content",
+                target=operation.description,
+                file_path=str(target_path),
+            )
+
+        return FilePatch(
+            path=target_path,
+            original=original,
+            modified=modified,
+            exists=exists,
+            delete=patch_file.is_deleted_file,
+        )
+
     def _ensure_lsp_rename_available(self, operation: Operation, operation_name: str) -> None:
         # The language is hardcoded to Java.  Multi-language support requires:
         # 1. Detecting/persisting the project language(s) during scan.
@@ -462,7 +630,13 @@ class ExecutionEngine:
             symbol = graph.resolve_class(operation.class_name)
             return [symbol.file_path] if symbol else []
         if isinstance(operation, RemoveFieldOperation):
-            return graph.get_affected_files_for_field(operation.class_name, operation.field_name)
+            field = graph.resolve_field(operation.class_name, operation.field_name)
+            return [field.file_path] if field else []
+        if isinstance(operation, PatchOperation):
+            try:
+                return sorted(file.target_path for file in parse_unified_patch(operation.patch))
+            except PatchParseError:
+                return []
         return []
 
     def _project_file_path(self, file_path: str) -> Path:
@@ -494,7 +668,7 @@ class ExecutionEngine:
         Raises:
             EngineError: If a write fails and rollback cannot fully restore state.
         """
-        backups = {patch.path: patch.original for patch in patches}
+        backups = {patch.path: (patch.exists, patch.original) for patch in patches}
         modified: list[str] = []
         moved: list[tuple[Path, Path]] = []
 
@@ -503,7 +677,12 @@ class ExecutionEngine:
                 self._assert_inside_project(patch.path)
                 write_path = patch.destination or patch.path
                 self._assert_inside_project(write_path)
-                write_path.write_text(patch.modified, encoding="utf-8")
+                if patch.delete:
+                    if patch.path.exists():
+                        patch.path.unlink()
+                else:
+                    write_path.parent.mkdir(parents=True, exist_ok=True)
+                    write_path.write_text(patch.modified, encoding="utf-8")
                 if patch.destination is not None:
                     moved.append((patch.path, patch.destination))
                     patch.path.unlink()
@@ -514,15 +693,15 @@ class ExecutionEngine:
                 try:
                     if destination.exists():
                         destination.unlink()
-                    original_path.write_text(backups[original_path], encoding="utf-8")
+                    original_path.write_text(backups[original_path][1], encoding="utf-8")
                 except Exception as rollback_exc:
                     logger.error("Rollback failed for moved file %s: %s", original_path, rollback_exc)
-            for path, original in backups.items():
+            for path, (existed, original) in backups.items():
                 try:
-                    if not path.exists():
+                    if existed:
                         path.write_text(original, encoding="utf-8")
-                    else:
-                        path.write_text(original, encoding="utf-8")
+                    elif path.exists():
+                        path.unlink()
                 except Exception as rollback_exc:
                     logger.error("Rollback failed for %s: %s", path, rollback_exc)
             if isinstance(exc, EngineError):
@@ -606,3 +785,276 @@ def _normalize_newlines(modified: str, original: str) -> str:
 
 def _operation_target(operation: Operation) -> str | None:
     return getattr(operation, "target", None)
+
+
+@dataclass(frozen=True)
+class SourceRange:
+    """
+    A half-open source range measured in Python string offsets.
+    """
+
+    start: int
+    end: int
+
+
+def _find_class_body_range(text: str, class_name: str) -> SourceRange | None:
+    """
+    Locate the body range for a top-level Java type by simple class name.
+    """
+    pattern = re.compile(
+        rf"\b(?:class|interface|enum|record)\s+{re.escape(class_name)}\b"
+    )
+    clean = _mask_comments_and_literals(text)
+    match = pattern.search(clean)
+    if match is None:
+        return None
+
+    brace_index = clean.find("{", match.end())
+    if brace_index < 0:
+        return None
+    close_index = _find_matching_brace_offset(clean, brace_index)
+    if close_index is None:
+        return None
+    return SourceRange(start=brace_index + 1, end=close_index)
+
+
+def _field_insert_offset(
+    text: str,
+    graph: SemanticGraph,
+    class_id: str,
+    body_range: SourceRange,
+) -> int:
+    """
+    Return the preferred insertion offset for a new field declaration.
+    """
+    fields = [
+        symbol
+        for symbol in graph.symbols
+        if symbol.parent_id == class_id and symbol.type.value == "field"
+    ]
+    field_ranges = [
+        item
+        for item in (_field_declaration_range(text, field) for field in fields)
+        if item is not None
+    ]
+    if field_ranges:
+        return max(item.end for item in field_ranges)
+
+    newline = text.find("\n", body_range.start)
+    if newline >= 0 and newline < body_range.end:
+        return newline + 1
+    return body_range.start
+
+
+def _accessor_insert_offset(text: str, body_range: SourceRange) -> int:
+    """
+    Return the preferred insertion offset for generated accessor methods.
+    """
+    return body_range.end
+
+
+def _build_field_declaration(
+    operation: AddFieldOperation, member_indent: str, line_sep: str
+) -> str:
+    """
+    Render a private Java field declaration.
+    """
+    initializer = (
+        f" = {operation.default_value.strip()}" if operation.default_value is not None else ""
+    )
+    return f"{member_indent}private {operation.field_type.strip()} {operation.field_name}{initializer};{line_sep}"
+
+
+def _build_accessor_methods(
+    operation: AddFieldOperation, member_indent: str, line_sep: str
+) -> str:
+    """
+    Render JavaBean getter and setter methods for an added field.
+    """
+    field_type = operation.field_type.strip()
+    field_name = operation.field_name
+    suffix = _java_bean_suffix(field_name)
+    getter_name = f"is{suffix}" if field_type in {"boolean", "Boolean"} else f"get{suffix}"
+    setter_name = f"set{suffix}"
+    inner_indent = f"{member_indent}    "
+
+    return (
+        f"{line_sep}"
+        f"{member_indent}public {field_type} {getter_name}() {{{line_sep}"
+        f"{inner_indent}return {field_name};{line_sep}"
+        f"{member_indent}}}{line_sep}"
+        f"{line_sep}"
+        f"{member_indent}public void {setter_name}({field_type} {field_name}) {{{line_sep}"
+        f"{inner_indent}this.{field_name} = {field_name};{line_sep}"
+        f"{member_indent}}}{line_sep}"
+    )
+
+
+def _field_declaration_range(text: str, field_symbol: Symbol) -> SourceRange | None:
+    """
+    Locate the source line that declares a field symbol.
+    """
+    if field_symbol.line <= 0:
+        return None
+    start = _line_start_offset(text, field_symbol.line)
+    end = _next_line_offset(text, start)
+    line = text[start:end]
+    if not re.search(rf"\b{re.escape(field_symbol.name)}\b", line):
+        return None
+    return SourceRange(start=start, end=end)
+
+
+def _method_declaration_range(text: str, method_symbol: Symbol) -> SourceRange | None:
+    """
+    Locate the source range for a method declaration and body.
+    """
+    if method_symbol.line <= 0:
+        return None
+    start = _line_start_offset(text, method_symbol.line)
+    clean = _mask_comments_and_literals(text)
+    open_brace = clean.find("{", start)
+    semicolon = clean.find(";", start)
+    if open_brace < 0 and semicolon < 0:
+        return None
+    if semicolon >= 0 and (open_brace < 0 or semicolon < open_brace):
+        return _expand_to_following_blank_line(text, SourceRange(start, semicolon + 1))
+
+    close_brace = _find_matching_brace_offset(clean, open_brace)
+    if close_brace is None:
+        return None
+    return _expand_to_following_blank_line(
+        text,
+        SourceRange(start=start, end=_next_line_offset(text, close_brace)),
+    )
+
+
+def _bean_accessor_symbols(graph: SemanticGraph, field_symbol: Symbol) -> list[Symbol]:
+    """
+    Return getter/setter symbols conventionally associated with a field symbol.
+    """
+    if not field_symbol.parent_id:
+        return []
+    names = _bean_accessor_names(
+        field_symbol.name,
+        str(field_symbol.extra.get("type_name", "")),
+    )
+    return [
+        symbol
+        for symbol in graph.symbols
+        if symbol.parent_id == field_symbol.parent_id
+        and symbol.type.value == "method"
+        and symbol.name in names
+    ]
+
+
+def _remove_source_ranges(text: str, ranges: list[SourceRange]) -> str:
+    """
+    Remove non-overlapping source ranges from a string.
+    """
+    result = text
+    ordered = sorted(ranges, key=lambda item: item.start, reverse=True)
+    for item in ordered:
+        result = result[: item.start] + result[item.end :]
+    return result
+
+
+def _expand_to_following_blank_line(text: str, source_range: SourceRange) -> SourceRange:
+    """
+    Extend a range through one following blank line when present.
+    """
+    next_start = source_range.end
+    next_end = _next_line_offset(text, next_start)
+    if next_start < len(text) and text[next_start:next_end].strip() == "":
+        return SourceRange(start=source_range.start, end=next_end)
+    return source_range
+
+
+def _detect_member_indent(text: str, body_start: int, body_end: int) -> str:
+    """
+    Infer the indentation used for direct class members.
+    """
+    body = text[body_start:body_end]
+    for line in body.splitlines():
+        if line.strip():
+            return line[: len(line) - len(line.lstrip())]
+    return "    "
+
+
+def _find_matching_brace_offset(text: str, open_index: int) -> int | None:
+    """
+    Find the closing brace for an opening brace in already-masked Java source.
+    """
+    depth = 0
+    for index in range(open_index, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _line_start_offset(text: str, one_based_line: int) -> int:
+    """
+    Return the string offset where a one-based source line begins.
+    """
+    if one_based_line <= 1:
+        return 0
+    offset = 0
+    for _ in range(one_based_line - 1):
+        newline = text.find("\n", offset)
+        if newline < 0:
+            return len(text)
+        offset = newline + 1
+    return offset
+
+
+def _next_line_offset(text: str, offset: int) -> int:
+    """
+    Return the offset immediately after the current line.
+    """
+    newline = text.find("\n", offset)
+    return len(text) if newline < 0 else newline + 1
+
+
+def _line_separator(text: str) -> str:
+    """
+    Preserve the dominant newline style of the source file.
+    """
+    return "\r\n" if "\r\n" in text else "\n"
+
+
+def _java_bean_suffix(name: str) -> str:
+    """
+    Convert a field name to the JavaBean accessor suffix.
+    """
+    if not name:
+        return ""
+    if len(name) > 1 and name[0].islower() and name[1].isupper():
+        return name
+    return name[:1].upper() + name[1:]
+
+
+def _bean_accessor_names(field_name: str, field_type: str = "") -> set[str]:
+    """
+    Return conventional accessor names for a field.
+    """
+    suffix = _java_bean_suffix(field_name)
+    getter = f"is{suffix}" if field_type.strip() in {"boolean", "Boolean"} else f"get{suffix}"
+    return {getter, f"set{suffix}"}
+
+
+def _mask_comments_and_literals(text: str) -> str:
+    """
+    Replace comments and string literals with spaces while preserving offsets.
+    """
+    def replace(match: re.Match[str]) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    text = re.sub(r"/\*.*?\*/", replace, text, flags=re.DOTALL)
+    text = re.sub(r"//.*", replace, text)
+    text = re.sub(r'"(?:\\.|[^"\\])*"', replace, text)
+    text = re.sub(r"'(?:\\.|[^'\\])*'", replace, text)
+    return text

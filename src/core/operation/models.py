@@ -4,6 +4,7 @@ Defines the structured operation specifications for semantic code modifications.
 Each operation targets a semantic entity (not raw text) and is verifiable + reversible.
 """
 
+import re
 from enum import Enum
 from typing import Literal
 
@@ -20,6 +21,13 @@ def _new_fqn(old_fqn: str, new_simple_name: str) -> str:
     return f"{package}.{new_simple_name}" if package else new_simple_name
 
 
+_JAVA_TYPE_RE = re.compile(r"^[\w$.\[\]<>?, extends super&\s]+$")
+
+
+def _is_safe_java_type(value: str) -> bool:
+    return bool(value.strip()) and bool(_JAVA_TYPE_RE.match(value))
+
+
 class OperationType(str, Enum):
     """
     All operation types understood by Voyager.
@@ -33,6 +41,7 @@ class OperationType(str, Enum):
     RENAME_FIELD = "rename_field"
     RENAME_METHOD = "rename_method"
     RENAME_CLASS = "rename_class"
+    PATCH = "patch"
     UPDATE_API = "update_api"
     ADD_FUNCTION = "add_function"
     UPDATE_FUNCTION_SIGNATURE = "update_function_signature"
@@ -190,12 +199,9 @@ class AddFieldOperation(BaseModel):
     """
     Add a new field to a DTO class.
 
-    V1: declared but not implemented in the execution engine.
-    The ``reverse()`` method loses type information.
-
     Attributes:
         op: Fixed to ``OperationType.ADD_FIELD``.
-        target: Target class name.
+        target: Fully qualified target class name.
         field_name: Name of the new field.
         field_type: Java type (default ``"String"``).
         default_value: Optional default value expression.
@@ -208,9 +214,31 @@ class AddFieldOperation(BaseModel):
     default_value: str | None = None
 
     @model_validator(mode="after")
+    def validate_target_format(self) -> "AddFieldOperation":
+        if not _is_qualified_java_name(self.target):
+            raise ValueError(
+                f"Target class must be a fully qualified name, got: '{self.target}'"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_field_name(self) -> "AddFieldOperation":
         if not self.field_name.isidentifier():
             raise ValueError(f"Field name must be a valid identifier, got: '{self.field_name}'")
+        return self
+
+    @model_validator(mode="after")
+    def validate_field_type(self) -> "AddFieldOperation":
+        if not _is_safe_java_type(self.field_type):
+            raise ValueError(f"Field type must be a Java type, got: '{self.field_type}'")
+        return self
+
+    @model_validator(mode="after")
+    def validate_default_value(self) -> "AddFieldOperation":
+        if self.default_value is None:
+            return self
+        if "\n" in self.default_value or "\r" in self.default_value or ";" in self.default_value:
+            raise ValueError("Default value must be a single Java expression without semicolons")
         return self
 
     @property
@@ -228,17 +256,23 @@ class RemoveFieldOperation(BaseModel):
     """
     Remove a field from a DTO class.
 
-    V1: declared but not implemented in the execution engine.
-
     Attributes:
         op: Fixed to ``OperationType.REMOVE_FIELD``.
-        target: Target class name.
+        target: Fully qualified target class name.
         field_name: Name of the field to remove.
     """
 
     op: Literal[OperationType.REMOVE_FIELD] = OperationType.REMOVE_FIELD
     target: str = Field(description="Target class name")
     field_name: str
+
+    @model_validator(mode="after")
+    def validate_target_format(self) -> "RemoveFieldOperation":
+        if not _is_qualified_java_name(self.target):
+            raise ValueError(
+                f"Target class must be a fully qualified name, got: '{self.target}'"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_field_name(self) -> "RemoveFieldOperation":
@@ -257,6 +291,27 @@ class RemoveFieldOperation(BaseModel):
         return AddFieldOperation(target=self.target, field_name=self.field_name)
 
 
+class PatchOperation(BaseModel):
+    """
+    Apply a unified diff patch to files inside the project.
+
+    Attributes:
+        op: Fixed to ``OperationType.PATCH``.
+        patch: Unified diff text.
+        description: Optional human-readable note for operation logs.
+    """
+
+    op: Literal[OperationType.PATCH] = OperationType.PATCH
+    patch: str = Field(description="Unified diff text to apply")
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def validate_patch_text(self) -> "PatchOperation":
+        if not self.patch.strip():
+            raise ValueError("Patch text must not be empty")
+        return self
+
+
 # Union type for all supported operations
 Operation = (
     RenameFieldOperation
@@ -264,6 +319,7 @@ Operation = (
     | RenameClassOperation
     | AddFieldOperation
     | RemoveFieldOperation
+    | PatchOperation
 )
 
 

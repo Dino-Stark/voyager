@@ -1,11 +1,14 @@
-# Manual Test Steps: shop-dto rename operations
+# Manual Test Steps: shop-dto V1 operations
 
 ## Goal
 
-Verify that Voyager can rename Java fields, methods, and classes across the example project through the current Server-based runtime.
+Verify that Voyager can apply unified diff patches, add/remove Java fields, and rename Java fields, methods, and classes across the example project through the current Server-based runtime.
 
-Supported rename operations in this flow:
+Supported operations in this flow:
 
+- `patch`: apply a unified diff produced by a CLI-first coding agent
+- `add_field`: add `com.shop.OrderDTO.giftMessage`
+- `remove_field`: remove `com.shop.OrderDTO.giftMessage`
 - `rename_field`: `com.shop.UserDTO.userName` -> `customerName`
 - `rename_method`: `com.shop.UserService.formatDisplayName` -> `formatCustomerLabel`
 - `rename_class`: `com.shop.UserDTO` -> `CustomerProfile`
@@ -33,7 +36,22 @@ python -m scripts.setup_jdtls --check
 
 ---
 
-## Scenario A: rename_field
+## Automated E2E Regression
+
+From the Voyager repository root:
+
+```bash
+python examples/e2e_v1.py
+```
+
+Expected:
+
+- The script resets example projects before each scenario.
+- It verifies `patch`, `add_field`, `remove_field`, `rename_field`, `rename_method`,
+  `rename_class`, and multi-project Server isolation.
+- It stops any Servers it starts.
+
+## Scenario A: patch
 
 ### Step A1: Reset
 
@@ -43,7 +61,147 @@ From the Voyager repository root:
 python examples/reset.py shop-dto
 ```
 
-### Step A2: Start Server
+### Step A2: Create Patch File
+
+```bash
+cd examples/shop-dto
+cat > agent.patch <<'PATCH'
+--- a/src/main/java/com/shop/OrderDTO.java
++++ b/src/main/java/com/shop/OrderDTO.java
+@@ -1,7 +1,7 @@
+ package com.shop;
+ 
+ public class OrderDTO {
+-    private String orderId;
++    private String externalOrderId;
+     private double totalPrice;
+ 
+     public String getOrderId() {
+PATCH
+```
+
+### Step A3: Scan
+
+```bash
+voyager -v scan .
+```
+
+### Step A4: Plan Patch
+
+```bash
+voyager plan patch agent.patch
+```
+
+Expected:
+
+```text
+Plan valid. 1 file(s) affected:
+  - src/main/java/com/shop/OrderDTO.java
+```
+
+### Step A5: Apply Patch
+
+```bash
+voyager apply -y
+```
+
+Expected:
+
+- `OrderDTO.java` contains `private String externalOrderId;`.
+- The operation is rejected instead if hunk context does not match.
+
+### Step A6: Stop Server
+
+```bash
+voyager stop
+```
+
+---
+
+## Scenario B: add_field and remove_field
+
+### Step B1: Reset
+
+From the Voyager repository root:
+
+```bash
+python examples/reset.py shop-dto
+```
+
+### Step B2: Scan
+
+```bash
+cd examples/shop-dto
+voyager -v scan .
+```
+
+### Step B3: Plan Field Add
+
+```bash
+voyager plan add_field com.shop.OrderDTO giftMessage String
+```
+
+Expected:
+
+```text
+Plan valid. 1 file(s) affected:
+  - src/main/java/com/shop/OrderDTO.java
+```
+
+### Step B4: Apply Field Add
+
+```bash
+voyager apply -y
+```
+
+Expected:
+
+- `OrderDTO.java` contains `private String giftMessage;`.
+- `OrderDTO.java` contains `getGiftMessage()` and `setGiftMessage(String giftMessage)`.
+
+### Step B5: Plan Field Remove
+
+```bash
+voyager plan remove_field com.shop.OrderDTO giftMessage
+```
+
+Expected:
+
+```text
+Plan valid. 1 file(s) affected:
+  - src/main/java/com/shop/OrderDTO.java
+```
+
+### Step B6: Apply Field Remove
+
+```bash
+voyager apply -y
+```
+
+Expected:
+
+- `giftMessage`, `getGiftMessage()`, and `setGiftMessage(...)` are removed from `OrderDTO.java`.
+- The operation is rejected instead if Voyager detects external typed field or accessor references.
+
+### Step B7: Stop Server
+
+```bash
+voyager stop
+```
+
+---
+
+## Scenario C: rename_field
+
+### Step C1: Reset
+
+From the Voyager repository root:
+
+```bash
+python examples/reset.py shop-dto
+```
+
+### Step C2: Start Server
 
 ```bash
 cd examples/shop-dto
@@ -57,7 +215,7 @@ Expected:
 - Server connection info is written to `.voyager/cache/server.json`.
 - No semantic graph is built yet.
 
-### Step A3: Scan
+### Step C3: Scan
 
 ```bash
 voyager -v scan .
@@ -74,7 +232,7 @@ Expected:
   - `UserService`
 - References are saved to `.voyager/graph.json`.
 
-### Step A4: Plan Field Rename
+### Step C4: Plan Field Rename
 
 ```bash
 voyager plan rename_field com.shop.UserDTO.userName customerName
@@ -91,7 +249,7 @@ Plan valid. 3 file(s) affected:
 
 The plan includes JavaBean accessor call sites such as `getUserName()` because JDT LS field rename will update them to `getCustomerName()`.
 
-### Step A5: Apply
+### Step C5: Apply
 
 ```bash
 voyager apply -y
@@ -106,7 +264,7 @@ Operation applied successfully.
   Modified: src\main\java\com\shop\UserService.java
 ```
 
-### Step A6: Verify Source Changes
+### Step C6: Verify Source Changes
 
 `UserDTO.java`:
 
@@ -125,7 +283,7 @@ Operation applied successfully.
 
 Known V1 behavior: the setter parameter can remain `String userName`. JDT LS renames the field symbol and JavaBean accessor names, but the parameter is a local variable.
 
-### Step A7: Stop Server
+### Step C7: Stop Server
 
 ```bash
 voyager stop
@@ -139,9 +297,9 @@ Expected:
 
 ---
 
-## Scenario B: rename_method
+## Scenario D: rename_method
 
-### Step B1: Reset
+### Step D1: Reset
 
 From the Voyager repository root:
 
@@ -150,7 +308,7 @@ python examples/reset.py shop-dto
 cd examples/shop-dto
 ```
 
-### Step B2: Scan
+### Step D2: Scan
 
 `scan/plan/apply` can auto-start the Server, so this scenario does not require an explicit `start`.
 
@@ -158,7 +316,7 @@ cd examples/shop-dto
 voyager -v scan .
 ```
 
-### Step B3: Plan Method Rename
+### Step D3: Plan Method Rename
 
 ```bash
 voyager plan rename_method com.shop.UserService.formatDisplayName formatCustomerLabel
@@ -178,7 +336,7 @@ The method declaration lives in `UserService.java`; the typed call site lives in
 userService.formatDisplayName(user)
 ```
 
-### Step B4: Apply
+### Step D4: Apply
 
 ```bash
 voyager apply -y
@@ -192,7 +350,7 @@ Operation applied successfully.
   Modified: src\main\java\com\shop\UserService.java
 ```
 
-### Step B5: Verify Source Changes
+### Step D5: Verify Source Changes
 
 `UserService.java`:
 
@@ -202,7 +360,7 @@ Operation applied successfully.
 
 - `return userService.formatCustomerLabel(user);`
 
-### Step B6: Stop Server
+### Step D6: Stop Server
 
 ```bash
 voyager stop
@@ -210,9 +368,9 @@ voyager stop
 
 ---
 
-## Scenario C: rename_class
+## Scenario E: rename_class
 
-### Step C1: Reset
+### Step E1: Reset
 
 From the Voyager repository root:
 
@@ -221,13 +379,13 @@ python examples/reset.py shop-dto
 cd examples/shop-dto
 ```
 
-### Step C2: Scan
+### Step E2: Scan
 
 ```bash
 voyager -v scan .
 ```
 
-### Step C3: Plan Class Rename
+### Step E3: Plan Class Rename
 
 ```bash
 voyager plan rename_class com.shop.UserDTO CustomerProfile
@@ -243,7 +401,7 @@ Plan valid. 4 file(s) affected:
   - src/main/java/com/shop/UserService.java
 ```
 
-### Step C4: Apply
+### Step E4: Apply
 
 ```bash
 voyager apply -y
@@ -261,7 +419,7 @@ Operation applied successfully.
 
 `rename_class` uses JDT LS semantic rename and then moves the Java source file when the file name matches the old public class name.
 
-### Step C5: Verify Source Changes
+### Step E5: Verify Source Changes
 
 Expected:
 
@@ -270,7 +428,7 @@ Expected:
 - `CustomerProfile.java` declares `public class CustomerProfile`.
 - `OrderService.java`, `UserDTOAudit.java`, and `UserService.java` use `CustomerProfile`.
 
-### Step C6: Stop Server
+### Step E6: Stop Server
 
 ```bash
 voyager stop
