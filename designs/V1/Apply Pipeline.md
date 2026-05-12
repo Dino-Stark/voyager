@@ -1,137 +1,120 @@
 # Apply Pipeline
 
-This document describes the current V1 apply path. Rename operations use JDT LS;
-`add_field`, `remove_field`, and `patch` use conservative static source patches.
+This document describes the current V1 apply path. `patch` is the only public
+edit operation. Internally, Voyager applies an ordered patch set to a virtual
+filesystem, validates the resulting project snapshot, then commits atomically.
+
 In normal CLI usage, apply runs inside the project-scoped Voyager Server:
 
-```text
-voyager apply
-  -> cli.commands.apply.apply_plan()
-  -> VoyagerServerClient.apply(operation)
-  -> VoyagerServer: operation/apply
-  -> ProjectSession.apply()
-  -> ExecutionEngine.apply_async()
+```mermaid
+flowchart LR
+    apply_cmd["voyager apply"]
+    apply_cmd --> cli_apply["cli.commands.apply.apply_plan()"]
+    cli_apply --> client_apply["VoyagerServerClient.apply(operation)"]
+    client_apply --> server_apply["VoyagerServer: operation/apply"]
+    server_apply --> session_apply["ProjectSession.apply()"]
+    session_apply --> engine_apply["ExecutionEngine.apply_async()"]
 ```
 
-`ExecutionEngine.apply()` still exists as a synchronous wrapper for programmatic use, but the Server path uses `apply_async()` so it can reuse the long-lived `LspClient`.
+`ExecutionEngine.apply()` still exists as a synchronous wrapper for programmatic
+use, but the Server path uses `apply_async()`.
 
 ---
 
 ## Pipeline
 
-```text
-1. Load pending operation
-   .voyager/pending_plan.json
+```mermaid
+flowchart TD
+    load["1. Load pending operation<br/>.voyager/pending_plan.json"]
+    send["2. Send operation to Server<br/>VoyagerServerClient.apply()"]
+    pre["3. Pre-validate<br/>reject non-patch operations<br/>run custom graph rules"]
+    tx["4. Build virtual transaction<br/>parse ordered unified diff<br/>validate paths and hunk context<br/>track modify/create/delete/move"]
+    snapshot["5. Snapshot validation<br/>copy to .voyager/cache/vfs-snapshots/patch-id<br/>apply virtual state<br/>parse with JDT LS when available"]
+    rebuild["6. Rebuild graph<br/>parse modified, created, moved, and non-deleted Java files"]
+    post["7. Post-validate<br/>RuleValidator.validate_post(new_graph, operation)"]
+    commit["8. Commit<br/>write, create, delete, and move files<br/>rollback on write failure"]
+    persist["9. Persist<br/>save graph<br/>append operation log<br/>clear pending plan in CLI"]
 
-2. Send operation to Server
-   VoyagerServerClient.apply()
-
-3. Pre-validate
-   RuleValidator.validate_pre(graph, operation)
-
-4. Build patches
-   rename_field / rename_method / rename_class:
-     - resolve target field from SemanticGraph
-     - call JDT LS prepareRename
-     - call JDT LS rename
-     - convert LspWorkspaceEdit to FilePatch objects
-   add_field:
-     - resolve target class from SemanticGraph
-     - insert a private field and JavaBean getter/setter
-   remove_field:
-     - resolve target field from SemanticGraph
-     - remove the field and conventional JavaBean getter/setter methods
-   patch:
-     - parse unified diff text
-     - validate paths stay inside the project root
-     - apply hunks in memory with exact context matching
-
-5. Rebuild graph in memory
-   parse modified file contents without writing them yet
-
-6. Post-validate
-   RuleValidator.validate_post(new_graph, operation)
-
-7. Commit
-   write all modified files
-   rollback on write failure
-
-8. Persist
-   save .voyager/graph.json
-   append .voyager/operations.log
-   clear .voyager/pending_plan.json in CLI
+    load --> send --> pre --> tx --> snapshot --> rebuild --> post --> commit --> persist
 ```
 
 ---
 
-## Why LSP Rename Is Required
-
-`rename_field` can affect:
-
-- field declarations,
-- direct field usages,
-- JavaBean getter/setter names,
-- cross-file method calls,
-- references known only to the Java language server.
-
-Voyager therefore uses JDT LS `textDocument/rename` for the actual edit set. It does not use string replacement as a fallback, because that would break the semantic-first design principle.
-
-## Static Field Edits
-
-`add_field` and `remove_field` are single-class static edits in V1. They do not
-need JDT LS because they do not rewrite references across files.
-
-`add_field`:
-
-- inserts `private <type> <name>;` after existing fields,
-- appends JavaBean getter/setter methods before the class closing brace,
-- supports an optional single-expression default value.
-
-`remove_field`:
-
-- removes the field declaration,
-- removes conventional JavaBean getter/setter methods for that field,
-- rejects the plan if typed external field or accessor references are known.
-
-Both operations still rebuild the graph in memory, run post-validation, and
-commit atomically through the same engine path as rename operations.
-
 ## Unified Diff Patch
 
-`patch` is an agent-friendly operation for CLI-first workflows:
+`patch` is designed for coding agents that naturally work through CLI tools:
 
 ```bash
 voyager plan patch agent.patch
+voyager plan patch agent-1.patch agent-2.patch
 voyager apply -y
 ```
 
 The operation stores unified diff text in `.voyager/pending_plan.json`. During
-apply, Voyager parses the diff, rejects paths outside the project, applies hunks
-against exact context, rebuilds the graph in memory, then commits atomically.
-Unified diffs may modify existing files, create new files with `/dev/null` as
-the old path, or delete files with `/dev/null` as the new path.
+plan, Voyager parses the full patch set, rejects unsafe paths, checks that all
+hunks apply in order against exact virtual-file context, and validates a
+temporary project snapshot. During apply, Voyager repeats that virtual apply and
+validation before committing.
 
-Patch construction does not require JDT LS. Patch validation is syntactic and
-graph-level; Voyager does not attempt semantic intent recovery for arbitrary
-diffs.
+Supported patch effects:
+
+- modify existing files,
+- create new files with `/dev/null` as the old path,
+- delete files with `/dev/null` as the new path,
+- move files with `diff --git` `rename from` / `rename to` metadata,
+- move and modify a file in the same patch section,
+- apply multiple patch files to the same virtual file in order.
+
+Voyager does not expose separate public operations for semantic rename,
+field add/remove, or file add/remove/move. Those changes should be represented
+as patches.
+
+---
+
+## Snapshot Validation
+
+JDT LS is built around real workspace/file URIs, so Voyager does not try to make
+JDT LS read an arbitrary in-memory VFS. Instead, it materializes a temporary
+project snapshot under:
+
+```text
+.voyager/cache/vfs-snapshots/
+```
+
+The snapshot excludes `.git` and `.voyager`, applies the virtual final state, and
+is then parsed through the normal Java parser path. If JDT LS is available, that
+parser uses `textDocument/documentSymbol`; otherwise it falls back to the static
+parser so lightweight test environments can still run.
+
+Current V1 uses the snapshot for graph construction and rule validation. It does
+not yet consume LSP diagnostics from the snapshot session; adding that diagnostic
+check is the next natural strengthening step.
+
+The snapshot is deleted after validation.
 
 ---
 
 ## Atomicity
 
-The engine builds all file patches in memory before writing anything.
+The engine builds every final `FilePatch` before writing anything.
 
-```text
-original files
-  -> LSP workspace edit
-  -> FilePatch(original, modified)
-  -> post-validation
-  -> commit
+```mermaid
+flowchart LR
+    source["source files"]
+    vfs["patch-set virtual filesystem"]
+    snapshot["snapshot validation"]
+    graph["graph rebuild"]
+    post["post-validation"]
+    patch["FilePatch(original, modified, destination, delete)"]
+    commit["commit"]
+
+    source --> vfs --> snapshot --> graph --> post --> patch --> commit
 ```
 
 If validation fails, no source file is touched.
 
-If writing fails partway through commit, already-written files are restored from their `FilePatch.original` content.
+If writing fails partway through commit, already-written files are restored from
+their original content and moved destinations are removed.
 
 ---
 
@@ -139,21 +122,24 @@ If writing fails partway through commit, already-written files are restored from
 
 | Case | Result |
 | --- | --- |
-| target field/class not found | `ApplyResult(success=False)` |
-| JDT LS not available | `lsp_unavailable`, no files touched |
-| `prepareRename` rejects target | validation error, no files touched |
-| JDT LS returns no edits | validation error, no files touched |
-| `remove_field` has external typed references | plan rejected, no files touched |
-| `patch` hunk context does not match | validation error, no files touched |
-| `patch` path escapes project root | validation error, no files touched |
-| post-validation finds stale old field | invalid result, no files touched |
+| non-patch operation | validation error, no files touched |
+| patch contains no unified diff sections | validation error, no files touched |
+| hunk context does not match | validation error, no files touched |
+| path escapes project root | validation error, no files touched |
+| patch creates an existing virtual file | validation error, no files touched |
+| patch deletes a missing virtual file | validation error, no files touched |
+| patch moves a missing file | validation error, no files touched |
+| patch moves to an existing file | validation error, no files touched |
+| patch set produces no final changes | validation error, no files touched |
+| LSP snapshot validation fails | validation error, no files touched |
+| post-validation finds duplicate definitions | invalid result, no files touched |
 | write failure | rollback attempted, error result |
 
 ---
 
 ## Current V1 Limits
 
-- `add_field` and `remove_field` only edit the declaring class and do not chase dynamic usages.
 - `patch` applies unified diffs exactly; it is not a semantic refactoring operation.
-- Post-validation uses the static parser for speed and determinism.
-- Setter parameter names may remain unchanged after JDT LS field rename. This is accepted in V1 because the parameter is a local variable, not the renamed field symbol.
+- JDT LS snapshot validation is skipped when JDT LS is unavailable.
+- Static parsing is intentionally conservative.
+- LSP diagnostics beyond graph construction are a future improvement.

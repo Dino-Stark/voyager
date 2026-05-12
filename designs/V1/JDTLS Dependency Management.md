@@ -2,20 +2,20 @@
 
 ## Role In Voyager V1
 
-Voyager V1 uses Eclipse JDT Language Server for Java semantic operations.
+Voyager V1 uses Eclipse JDT Language Server for Java semantic analysis and
+patch snapshot validation.
 
 JDT LS is required for:
 
-- `rename_field` apply,
-- `textDocument/prepareRename`,
-- `textDocument/rename`,
-- LSP-based `documentSymbol` scan when available.
+- LSP-based `documentSymbol` scan when available,
+- LSP-backed validation of temporary VFS project snapshots when available.
 
 JDT LS is not required for every V1 behavior:
 
 - static parsing can still build a graph for simple projects,
 - `plan` can run from the saved/static graph,
-- but `apply rename_field` must fail safely if JDT LS is unavailable.
+- patch construction and exact hunk application are static,
+- snapshot validation falls back to the static parser if JDT LS is unavailable.
 
 ---
 
@@ -78,25 +78,20 @@ cmd.exe /c <resolved launcher>
 
 JDT LS is no longer started once per CLI command. It is owned by the project-scoped Voyager Server.
 
-```text
-voyager start .
-  -> VoyagerServer starts
-  -> ProjectSession.start()
-  -> LspClient(Language.JAVA).start()
-  -> JDT LS stays alive
+```mermaid
+flowchart TD
+    start["voyager start ."]
+    start --> server["VoyagerServer starts"]
+    server --> session["ProjectSession.start()"]
+    session --> lsp["LspClient(Language.JAVA).start()"]
+    lsp --> alive["JDT LS stays alive"]
 
-voyager scan .
-  -> reuse same Server and JDT LS
+    scan["voyager scan ."] --> reuse_scan["reuse same Server and JDT LS"]
+    plan["voyager plan patch ..."] --> reuse_plan["reuse same Server and JDT LS"]
+    apply["voyager apply ..."] --> reuse_apply["reuse same Server and JDT LS"]
 
-voyager plan ...
-  -> reuse same Server and JDT LS
-
-voyager apply ...
-  -> reuse same Server and JDT LS
-
-voyager stop
-  -> ProjectSession.close()
-  -> LspClient.shutdown()
+    stop["voyager stop"] --> close["ProjectSession.close()"]
+    close --> shutdown["LspClient.shutdown()"]
 ```
 
 This avoids repeated JDT LS startup/shutdown noise and keeps the Java index warm between commands.
@@ -143,7 +138,9 @@ Responsibilities:
   - `rename_symbol()`
 - shut down the subprocess on `voyager stop`.
 
-Server mode injects the long-lived `LspClient` into `ExecutionEngine`, so `apply_async()` does not create a fresh JDT LS process.
+Server mode owns the long-lived `LspClient` for project scan. Patch snapshot
+validation uses temporary real project directories under `.voyager/cache` so
+JDT LS can reason about normal file URIs.
 
 ---
 
@@ -166,11 +163,13 @@ Known JDT LS shutdown noise is filtered where possible, because JDT LS may emit 
 If JDT LS cannot be found:
 
 - `scan` may still fall back to static parser,
-- `plan` may still work from graph/static facts,
-- `apply rename_field` returns `lsp_unavailable`,
-- no string replacement fallback is attempted.
+- `plan` and `apply` may still validate patches through exact hunk application
+  and static graph rebuild,
+- LSP snapshot validation is skipped.
 
-This is intentional: `rename_field` is a semantic operation and must be driven by a semantic engine.
+This is intentional for V1 testability and lightweight environments. The
+long-term direction is to strengthen semantic snapshot validation rather than
+reintroduce PSI-like edit operations.
 
 ---
 

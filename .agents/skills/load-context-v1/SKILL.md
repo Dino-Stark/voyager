@@ -22,14 +22,14 @@ After code changes in Voyager, completion means:
    - Before final response, run the full unit suite with `python -m pytest -q`.
 
 2. Example flows pass.
-   - For rename-related work, run the relevant `examples/shop-dto` CLI flows from a fresh reset.
+   - For patch pipeline work, run `python examples/e2e_v1.py` from a fresh reset.
    - Reset examples before and after manual/example verification with `python examples/reset.py <project>`.
-   - For current V1 rename coverage, verify `rename_field`, `rename_method`, and `rename_class` when affected.
+   - Current V1 e2e coverage verifies ordered patch sets, file create/modify/move/delete, and multi-project Server isolation.
 
 3. Documentation is synchronized.
    - Update `designs/V1/` documents and `examples/README.md` when commands, behavior, manual steps, examples, or limitations change.
    - Keep manual test steps executable and aligned with current CLI syntax.
-   - Current rename commands use fully qualified class names. Do not document old simple-name targets or deprecated unprefixed `voyager plan rename Class.field newName`.
+   - Current V1 public edit API is patch-only. Do not document removed structured edit operations as supported commands.
 
 4. Progress is explicit.
    - During work, keep a visible checklist/status: completed, in progress, and pending.
@@ -42,23 +42,24 @@ Key repository areas:
 
 ```text
 voyager/
-|-- designs/V1/          # V1 design documents, the foundation for implementation
+|-- designs/V1/          # V1 design documents
 |-- src/                 # Source code
 |   |-- cli/             # Command-line interface
 |   |-- core/            # Core engine
-|   |   |-- diff/        # Diff engine
+|   |   |-- diff/        # Patch engine
 |   |   |-- engine/      # Execution engine
 |   |   |-- graph/       # Semantic graph
 |   |   |-- lsp/         # LSP client
 |   |   |-- operation/   # Operation models
 |   |   |-- parser/      # Parser
-|   |   `-- rules/       # Rule validation
+|   |   |-- rules/       # Rule validation
+|   |   `-- vfs/         # Virtual filesystem transaction
 |   |-- storage/         # Storage management
 |   |-- utils/           # Utilities
 |   `-- voyager_cmd/     # Main entry point
 |-- tests/               # Unit tests
-|-- scripts/             # Pre/post scripts, such as JDTLS helpers
-`-- examples/            # Example code, such as shop-dto
+|-- scripts/             # JDT LS helpers
+`-- examples/            # Example projects
 ```
 
 ## Workflow
@@ -76,16 +77,17 @@ voyager/
 
 2. Scan the source tree and inspect the main implementation files when present:
    - `src/core/engine/execution_engine.py`
+   - `src/core/vfs/transaction.py`
    - `src/core/graph/semantic_graph.py`
    - `src/core/lsp/client.py`
    - `src/core/parser/java_parser.py`
-   - `src/core/diff/diff_engine.py`
+   - `src/core/diff/patch_engine.py`
 
 3. Review `tests/test_static_v1.py` to understand current test coverage and expected behavior.
    Also review `tests/test_server_v1.py` when Server/client behavior or operation serialization is relevant.
 
 4. Browse `examples/shop-dto/` to understand practical usage and sample inputs.
-   For rename behavior, include the current `examples/shop-dto` fixture and `examples/README.md`.
+   For patch behavior, include the current `examples/shop-dto` fixture, `examples/e2e_v1.py`, and `examples/README.md`.
 
 5. Compare design intent with implementation:
    - Architecture consistency: which designed modules exist or are missing.

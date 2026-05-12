@@ -198,8 +198,8 @@ class GraphBuilder:
 
         This records ``var.method(...)`` when ``var`` has an explicit known type
         in the same file. It is intentionally conservative and exists mainly so
-        plan output can include JavaBean getter/setter call sites that JDT LS will
-        update during field rename.
+        graph output can include simple cross-file method-call relationships for
+        patch review and validation.
         """
         try:
             text = cls.file_path.read_text(encoding="utf-8")

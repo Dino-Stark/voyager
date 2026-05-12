@@ -6,14 +6,9 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from core.operation.models import (
-    AddFieldOperation,
     ApplyResult,
     Operation,
     PatchOperation,
-    RemoveFieldOperation,
-    RenameClassOperation,
-    RenameFieldOperation,
-    RenameMethodOperation,
 )
 from core.server.client import VoyagerServerClient
 from storage.manager import StorageManager
@@ -88,17 +83,6 @@ def _deserialize_operation(data: dict) -> Operation:
     Deserialize an operation from a dict.
     """
     op_type = data.get("op", "")
-    if op_type == "rename_field":
-        return RenameFieldOperation(**data)
-    elif op_type == "rename_method":
-        return RenameMethodOperation(**data)
-    elif op_type == "rename_class":
-        return RenameClassOperation(**data)
-    elif op_type == "add_field":
-        return AddFieldOperation(**data)
-    elif op_type == "remove_field":
-        return RemoveFieldOperation(**data)
-    elif op_type == "patch":
+    if op_type == "patch":
         return PatchOperation(**data)
-    else:
-        raise ValueError(f"Unknown operation type: {op_type}")
+    raise ValueError(f"Unknown operation type: {op_type}. Voyager editing is patch-only.")

@@ -2,12 +2,12 @@
 
 ## Directory structure
 
-```
+```text
 examples/
-  _sources/          <- Gold master copies (never modify these)
-    shop-dto/        <- Source files for the shop-dto project
-  shop-dto/          <- Runtime copy (safe to modify, will be reset)
-  reset.py           <- Script to reset all examples from _sources/
+|-- _sources/            # Gold master copies; never modify these
+|   `-- shop-dto/        # Source files for the shop-dto project
+|-- shop-dto/            # Runtime copy; safe to modify and reset
+`-- reset.py             # Reset script that copies from _sources
 ```
 
 - **`_sources/`** contains the pristine, read-only source files. Never edit files here during testing.
@@ -25,20 +25,18 @@ python examples/reset.py
 
 This deletes all files in the runtime directory and copies fresh files from `_sources/`.
 
-## shop-dto rename scenarios
+## shop-dto patch scenarios
 
-The `shop-dto` fixture covers the V1 field and rename operations:
+The `shop-dto` fixture covers the V1 patch-only editing flow:
 
 ```bash
 voyager plan patch agent.patch
-voyager plan add_field com.shop.OrderDTO giftMessage String
-voyager plan remove_field com.shop.OrderDTO giftMessage
-voyager plan rename_field com.shop.UserDTO.userName customerName
-voyager plan rename_method com.shop.UserService.formatDisplayName formatCustomerLabel
-voyager plan rename_class com.shop.UserDTO CustomerProfile
+voyager plan patch agent-1.patch agent-2.patch
 ```
 
-Run one scenario at a time from a fresh reset so each expected file list stays independent.
+Patch files can modify existing files, create files, delete files, and use
+git-style rename metadata. Run one scenario at a time from a fresh reset so each
+expected file list stays independent.
 
 ## E2E regression
 
@@ -48,6 +46,6 @@ Run the full example regression suite from the repository root:
 python examples/e2e_v1.py
 ```
 
-The script resets example projects, exercises `patch`, `add_field`,
-`remove_field`, `rename_field`, `rename_method`, `rename_class`, and the
-multi-project Server isolation flow, then stops any Servers it started.
+The script resets example projects, exercises ordered patch sets, file
+create/modify/move/delete lifecycle patches, and the multi-project Server
+isolation flow, then stops any Servers it started.

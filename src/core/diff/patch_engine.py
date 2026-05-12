@@ -51,6 +51,7 @@ class ParsedPatchFile:
     old_path: str | None
     new_path: str | None
     hunks: list[PatchHunk] = field(default_factory=list)
+    move_only: bool = False
 
     @property
     def is_new_file(self) -> bool:
@@ -59,6 +60,14 @@ class ParsedPatchFile:
     @property
     def is_deleted_file(self) -> bool:
         return self.new_path is None and self.old_path is not None
+
+    @property
+    def is_moved_file(self) -> bool:
+        return (
+            self.old_path is not None
+            and self.new_path is not None
+            and self.old_path != self.new_path
+        )
 
     @property
     def target_path(self) -> str:
@@ -78,6 +87,15 @@ def parse_unified_patch(patch_text: str) -> list[ParsedPatchFile]:
 
     while index < len(lines):
         line = lines[index]
+        if line.startswith("diff --git "):
+            metadata_file, next_index = _parse_git_metadata_file(lines, index)
+            if metadata_file is not None:
+                files.append(metadata_file)
+                index = next_index
+                continue
+            index += 1
+            continue
+
         if not line.startswith("--- "):
             index += 1
             continue
@@ -93,11 +111,8 @@ def parse_unified_patch(patch_text: str) -> list[ParsedPatchFile]:
         hunks: list[PatchHunk] = []
         while index < len(lines):
             current = lines[index]
-            if current.startswith("--- "):
+            if current.startswith("--- ") or current.startswith("diff --git "):
                 break
-            if current.startswith("diff --git "):
-                index += 1
-                continue
             if not current.startswith("@@ "):
                 index += 1
                 continue
@@ -178,7 +193,7 @@ def _parse_hunk(lines: list[str], start_index: int) -> tuple[PatchHunk, int]:
     index = start_index + 1
     while index < len(lines):
         line = lines[index]
-        if line.startswith("@@ ") or line.startswith("--- "):
+        if line.startswith("@@ ") or line.startswith("--- ") or line.startswith("diff --git "):
             break
         if line.startswith("\\"):
             if not hunk_lines:
@@ -205,6 +220,33 @@ def _parse_hunk(lines: list[str], start_index: int) -> tuple[PatchHunk, int]:
     )
     _validate_hunk_counts(hunk)
     return hunk, index
+
+
+def _parse_git_metadata_file(
+    lines: list[str], start_index: int
+) -> tuple[ParsedPatchFile | None, int]:
+    """
+    Parse a ``diff --git`` metadata-only file move section when present.
+    """
+    index = start_index + 1
+    section: list[str] = []
+    while index < len(lines) and not lines[index].startswith("diff --git "):
+        section.append(lines[index])
+        if lines[index].startswith("--- "):
+            return None, index
+        index += 1
+
+    old_path: str | None = None
+    new_path: str | None = None
+    for line in section:
+        if line.startswith("rename from "):
+            old_path = normalize_patch_path(line.removeprefix("rename from ").strip())
+        elif line.startswith("rename to "):
+            new_path = normalize_patch_path(line.removeprefix("rename to ").strip())
+
+    if old_path is None or new_path is None:
+        return None, index
+    return ParsedPatchFile(old_path=old_path, new_path=new_path, move_only=True), index
 
 
 def _parse_file_header(line: str, prefix: str) -> str | None:

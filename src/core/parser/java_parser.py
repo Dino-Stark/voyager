@@ -5,9 +5,9 @@ The parser has two modes:
 * LSP mode uses ``textDocument/documentSymbol`` when jdtls is available.
 * Static mode is a conservative POJO/DTO parser used for scan/plan and tests.
 
-Only execution of semantic rename requires LSP.  Static parsing deliberately
-extracts simple structure and explicit references; it does not guess dynamic
-behavior.
+Patch construction is static, while scan and temporary snapshot validation use
+LSP when it is available. Static parsing deliberately extracts simple structure
+and explicit references; it does not guess dynamic behavior.
 """
 
 import logging
@@ -207,13 +207,16 @@ def parse_java_project_static(project_path: Path) -> list[JavaClass]:
 
 
 def parse_java_project_static_with_overrides(
-    project_path: Path, file_overrides: dict[Path, str]
+    project_path: Path,
+    file_overrides: dict[Path, str],
+    deleted_files: set[Path] | None = None,
 ) -> list[JavaClass]:
     """Parse a project using in-memory content for selected files.
 
     Used by the execution engine for post-validation: after applying patches
     in-memory, this re-parses the project with the modified file contents so
     that rule validators can check the would-be result before committing.
+    ``deleted_files`` excludes files from that virtual project view.
 
     For on-disk modifications, use ``parse_java_project_static()`` after the
     execution engine has committed the patches via ``_commit()``.
@@ -221,6 +224,7 @@ def parse_java_project_static_with_overrides(
 
     project_path = project_path.resolve()
     normalized = {path.resolve(): content for path, content in file_overrides.items()}
+    deleted = {path.resolve() for path in (deleted_files or set())}
     classes: list[JavaClass] = []
     java_files = {
         file_path.resolve()
@@ -232,6 +236,7 @@ def parse_java_project_static_with_overrides(
         for path in normalized
         if path.suffix == ".java" and not _is_ignored_path(path)
     )
+    java_files.difference_update(deleted)
 
     for file_path in sorted(java_files):
         if _is_ignored_path(file_path):

@@ -151,6 +151,14 @@ class StorageManager:
         """
         return self.voyager_dir / CACHE_DIR
 
+    def get_vfs_snapshot_dir(self) -> Path:
+        """
+        Return the directory used for temporary virtual filesystem snapshots.
+        """
+        path = self.get_cache_dir() / "vfs-snapshots"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def load_session_path(self) -> Path:
         """
         Return the legacy path used to persist background session state.

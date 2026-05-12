@@ -7,13 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from core.operation.models import (
-    AddFieldOperation,
     Operation,
     PatchOperation,
-    RemoveFieldOperation,
-    RenameClassOperation,
-    RenameFieldOperation,
-    RenameMethodOperation,
 )
 
 
@@ -66,16 +61,6 @@ def deserialize_operation(data: dict[str, Any]) -> Operation:
     Restore an operation model from a JSON-compatible payload.
     """
     op_type = data.get("op", "")
-    if op_type == "rename_field":
-        return RenameFieldOperation(**data)
-    if op_type == "rename_method":
-        return RenameMethodOperation(**data)
-    if op_type == "rename_class":
-        return RenameClassOperation(**data)
-    if op_type == "add_field":
-        return AddFieldOperation(**data)
-    if op_type == "remove_field":
-        return RemoveFieldOperation(**data)
     if op_type == "patch":
         return PatchOperation(**data)
-    raise ValueError(f"Unknown operation type: {op_type}")
+    raise ValueError(f"Unknown operation type: {op_type}. Voyager editing is patch-only.")

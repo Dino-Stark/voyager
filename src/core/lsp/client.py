@@ -187,8 +187,8 @@ class LspClient:
     arrives in the background read loop.
 
     **File sync:** the client tracks open files and sends ``textDocument/didOpen``
-    and ``textDocument/didChange`` notifications so the server stays in sync with
-    in-memory content during rename operations.
+    and ``textDocument/didChange`` notifications for callers that need LSP
+    overlays.
     """
 
     def __init__(

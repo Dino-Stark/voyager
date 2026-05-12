@@ -1,4 +1,4 @@
-"""Rule validation for semantic operations."""
+"""Rule validation for patch-first Voyager operations."""
 
 import logging
 from dataclasses import dataclass
@@ -7,16 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from core.graph.semantic_graph import RefType, Reference, SemanticGraph, SymbolType
-from core.operation.models import (
-    AddFieldOperation,
-    Operation,
-    PatchOperation,
-    RemoveFieldOperation,
-    RenameClassOperation,
-    RenameFieldOperation,
-    RenameMethodOperation,
-)
+from core.graph.semantic_graph import SemanticGraph, SymbolType
+from core.operation.models import Operation, PatchOperation
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +17,7 @@ class RuleAction(str, Enum):
     """
     Severity level for a rule violation.
     """
+
     WARN = "warn"
     ERROR = "error"
 
@@ -38,8 +31,9 @@ class RuleDefinition:
         id: Unique rule identifier used in violation reports.
         type: Rule type, e.g. ``"symbol_uniqueness"``.
         target: Optional scope filter, e.g. ``"DTO"``.
-        action: ``"error"`` (blocks execution) or ``"warn"`` (logs only).
+        action: ``"error"`` or ``"warn"``.
     """
+
     id: str
     type: str
     target: str | None = None
@@ -48,22 +42,36 @@ class RuleDefinition:
 
 class RuleValidator:
     """
-    Validate operations and graph-level invariants.
-
-    Runs pre- and post-condition checks before and after every apply.  Rules are
-    loaded from ``.voyager/rules.yaml``; built-in checks include symbol existence,
-    name conflicts, and DTO uniqueness.
+    Validate patch operations and graph-level invariants.
     """
-
-    id: str
-    type: str
-    target: str | None = None
-    action: RuleAction = RuleAction.ERROR
 
     def __init__(self, rules_path: Path | None = None) -> None:
         self.rules: list[RuleDefinition] = []
         if rules_path and rules_path.exists():
             self._load_rules(rules_path)
+
+    def validate_pre(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
+        """
+        Validate an operation before patch construction.
+        """
+        violations: list[dict] = []
+        if not isinstance(operation, PatchOperation):
+            violations.append(
+                _violation(
+                    "unsupported_operation",
+                    "Voyager editing is patch-only; submit a unified diff patch set",
+                )
+            )
+        violations.extend(self._check_custom_rules(graph))
+        return violations
+
+    def validate_post(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
+        """
+        Validate the graph produced by a virtual patch transaction.
+        """
+        violations = self._check_duplicate_definitions(graph)
+        violations.extend(self._check_custom_rules(graph))
+        return violations
 
     def _load_rules(self, rules_path: Path) -> None:
         try:
@@ -79,310 +87,6 @@ class RuleValidator:
                 )
         except Exception as exc:
             logger.warning("Failed to load rules from %s: %s", rules_path, exc)
-
-    def validate_pre(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
-        violations: list[dict] = []
-
-        # NOTE: Each operation type is handled by isinstance checks.  A strategy/multi-method
-        # pattern would scale better when adding rename_class, rename_method, etc.
-
-        if isinstance(operation, RenameFieldOperation):
-            field = graph.resolve_field(operation.class_name, operation.field_name)
-            if field is None:
-                violations.append(
-                    _violation(
-                        "symbol_not_found",
-                        f"Field '{operation.target}' was not found",
-                        operation.target,
-                    )
-                )
-            elif graph.resolve_field(operation.class_name, operation.to) is not None:
-                violations.append(
-                    _violation(
-                        "symbol_already_exists",
-                        f"Field '{operation.class_name}.{operation.to}' already exists",
-                        f"{operation.class_name}.{operation.to}",
-                    )
-                )
-
-        elif isinstance(operation, RenameMethodOperation):
-            matches = graph.find_methods(operation.class_name, operation.method_name)
-            if not matches:
-                violations.append(
-                    _violation(
-                        "symbol_not_found",
-                        f"Method '{operation.target}' was not found",
-                        operation.target,
-                    )
-                )
-            elif len(matches) > 1:
-                violations.append(
-                    _violation(
-                        "ambiguous_symbol",
-                        f"Method '{operation.target}' is overloaded; V1 rename_method needs an unambiguous method",
-                        operation.target,
-                    )
-                )
-            elif graph.find_methods(operation.class_name, operation.to):
-                violations.append(
-                    _violation(
-                        "symbol_already_exists",
-                        f"Method '{operation.class_name}.{operation.to}' already exists",
-                        f"{operation.class_name}.{operation.to}",
-                    )
-                )
-
-        elif isinstance(operation, RenameClassOperation):
-            class_symbol = graph.resolve_class(operation.class_name)
-            if class_symbol is None:
-                violations.append(
-                    _violation(
-                        "symbol_not_found",
-                        f"Class '{operation.class_name}' was not found",
-                        operation.class_name,
-                    )
-                )
-            elif graph.resolve_class(operation.new_class_name) is not None:
-                violations.append(
-                    _violation(
-                        "symbol_already_exists",
-                        f"Class '{operation.new_class_name}' already exists",
-                        operation.new_class_name,
-                    )
-                )
-
-        elif isinstance(operation, AddFieldOperation):
-            if graph.resolve_class(operation.class_name) is None:
-                violations.append(
-                    _violation(
-                        "symbol_not_found",
-                        f"Class '{operation.class_name}' was not found",
-                        operation.class_name,
-                    )
-                )
-            elif graph.resolve_field(operation.class_name, operation.field_name) is not None:
-                violations.append(
-                    _violation(
-                        "symbol_already_exists",
-                        f"Field '{operation.class_name}.{operation.field_name}' already exists",
-                        f"{operation.class_name}.{operation.field_name}",
-                    )
-                )
-            else:
-                accessor_conflicts = _existing_accessor_conflicts(
-                    graph,
-                    operation.class_name,
-                    operation.field_name,
-                    operation.field_type,
-                )
-                if accessor_conflicts:
-                    violations.append(
-                        _violation(
-                            "symbol_already_exists",
-                            f"Accessor method(s) already exist: {sorted(accessor_conflicts)}",
-                            operation.class_name,
-                        )
-                    )
-
-        elif isinstance(operation, RemoveFieldOperation):
-            field = graph.resolve_field(operation.class_name, operation.field_name)
-            if field is None:
-                violations.append(
-                    _violation(
-                        "symbol_not_found",
-                        f"Field '{operation.class_name}.{operation.field_name}' was not found",
-                        f"{operation.class_name}.{operation.field_name}",
-                    )
-                )
-            else:
-                external_refs = [
-                    ref
-                    for ref in graph.find_references_to(field.id)
-                    if ref.ref_type == RefType.FIELD_ACCESS and ref.file_path != field.file_path
-                ]
-                if external_refs:
-                    locations = sorted({f"{ref.file_path}:{ref.line}" for ref in external_refs})
-                    violations.append(
-                        _violation(
-                            "validation_failed",
-                            f"Cannot remove field with external field access references: {locations}",
-                            f"{operation.class_name}.{operation.field_name}",
-                        )
-                    )
-                accessor_refs = _external_accessor_references(
-                    graph,
-                    operation.class_name,
-                    operation.field_name,
-                    str(field.extra.get("type_name", "")),
-                    field.file_path,
-                )
-                if accessor_refs:
-                    locations = sorted({f"{ref.file_path}:{ref.line}" for ref in accessor_refs})
-                    violations.append(
-                        _violation(
-                            "validation_failed",
-                            f"Cannot remove field with external accessor references: {locations}",
-                            f"{operation.class_name}.{operation.field_name}",
-                        )
-                    )
-
-        violations.extend(self._check_custom_rules(graph))
-        return violations
-
-    def validate_post(self, graph: SemanticGraph, operation: Operation) -> list[dict]:
-        violations = self._check_duplicate_definitions(graph)
-
-        if isinstance(operation, RenameFieldOperation):
-            class_symbol = graph.resolve_class(operation.class_name)
-            old_target_id = (
-                f"{class_symbol.id}.{operation.field_name}" if class_symbol is not None else None
-            )
-            old_field = graph.resolve_field(operation.class_name, operation.field_name)
-            if graph.resolve_field(operation.class_name, operation.to) is None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: '{operation.class_name}.{operation.to}' not found after apply",
-                        operation.target,
-                    )
-                )
-            if old_field is not None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: old field '{operation.target}' still exists after apply",
-                        operation.target,
-                    )
-                )
-            unresolved_old_refs = [
-                ref
-                for ref in graph.references
-                if ref.ref_type == RefType.FIELD_ACCESS
-                and old_target_id is not None
-                and ref.to_symbol == old_target_id
-            ]
-            if unresolved_old_refs:
-                locations = sorted({f"{ref.file_path}:{ref.line}" for ref in unresolved_old_refs})
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename left references to old field '{operation.field_name}': {locations}",
-                        operation.target,
-                    )
-                )
-
-        elif isinstance(operation, RenameMethodOperation):
-            class_symbol = graph.resolve_class(operation.class_name)
-            old_target_id = (
-                f"{class_symbol.id}.{operation.method_name}" if class_symbol is not None else None
-            )
-            if graph.resolve_method(operation.class_name, operation.to) is None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: '{operation.class_name}.{operation.to}' not found after apply",
-                        operation.target,
-                    )
-                )
-            if graph.resolve_method(operation.class_name, operation.method_name) is not None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: old method '{operation.target}' still exists after apply",
-                        operation.target,
-                    )
-                )
-            unresolved_old_refs = [
-                ref
-                for ref in graph.references
-                if ref.ref_type == RefType.METHOD_CALL
-                and old_target_id is not None
-                and ref.to_symbol == old_target_id
-            ]
-            if unresolved_old_refs:
-                locations = sorted({f"{ref.file_path}:{ref.line}" for ref in unresolved_old_refs})
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename left references to old method '{operation.method_name}': {locations}",
-                        operation.target,
-                    )
-                )
-
-        elif isinstance(operation, RenameClassOperation):
-            if graph.resolve_class(operation.new_class_name) is None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: class '{operation.new_class_name}' not found after apply",
-                        operation.target,
-                    )
-                )
-            if graph.resolve_class(operation.class_name) is not None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Rename failed: old class '{operation.class_name}' still exists after apply",
-                        operation.target,
-                    )
-                )
-
-        elif isinstance(operation, AddFieldOperation):
-            field = graph.resolve_field(operation.class_name, operation.field_name)
-            if field is None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Add failed: field '{operation.class_name}.{operation.field_name}' not found after apply",
-                        f"{operation.class_name}.{operation.field_name}",
-                    )
-                )
-            for method_name in _accessor_names(operation.field_name, operation.field_type):
-                if graph.resolve_method(operation.class_name, method_name) is None:
-                    violations.append(
-                        _violation(
-                            "validation_failed",
-                            f"Add failed: accessor '{operation.class_name}.{method_name}' not found after apply",
-                            f"{operation.class_name}.{method_name}",
-                        )
-                    )
-
-        elif isinstance(operation, RemoveFieldOperation):
-            field = graph.resolve_field(operation.class_name, operation.field_name)
-            if field is not None:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Remove failed: field '{operation.class_name}.{operation.field_name}' still exists after apply",
-                        f"{operation.class_name}.{operation.field_name}",
-                    )
-                )
-            for method_name in _accessor_names(operation.field_name):
-                if graph.resolve_method(operation.class_name, method_name) is not None:
-                    violations.append(
-                        _violation(
-                            "validation_failed",
-                            f"Remove failed: accessor '{operation.class_name}.{method_name}' still exists after apply",
-                            f"{operation.class_name}.{method_name}",
-                        )
-                    )
-
-        elif isinstance(operation, PatchOperation):
-            try:
-                from core.diff.patch_engine import parse_unified_patch
-
-                parse_unified_patch(operation.patch)
-            except Exception as exc:
-                violations.append(
-                    _violation(
-                        "validation_failed",
-                        f"Patch is invalid: {exc}",
-                        operation.description,
-                    )
-                )
-
-        violations.extend(self._check_custom_rules(graph))
-        return violations
 
     def _check_custom_rules(self, graph: SemanticGraph) -> list[dict]:
         violations: list[dict] = []
@@ -466,73 +170,16 @@ class RuleValidator:
         return violations
 
 
-# _violation returns a plain dict rather than a typed model because violations are
-# serialized directly into ApplyResult.errors (list[dict]) for JSON output flexibility.
 def _violation(
     kind: str,
     message: str,
     target: str | None = None,
     action: str = RuleAction.ERROR.value,
 ) -> dict:
+    """
+    Return a JSON-friendly validation violation.
+    """
     result = {"type": kind, "message": message, "action": action}
     if target:
         result["target"] = target
     return result
-
-
-def _existing_accessor_conflicts(
-    graph: SemanticGraph, class_name: str, field_name: str, field_type: str
-) -> set[str]:
-    """
-    Return generated accessor names that already exist on the target class.
-    """
-    return {
-        name
-        for name in _accessor_names(field_name, field_type)
-        if graph.resolve_method(class_name, name) is not None
-    }
-
-
-def _accessor_names(field_name: str, field_type: str = "") -> set[str]:
-    """
-    Return JavaBean accessor method names for a field.
-    """
-    suffix = _java_bean_suffix(field_name)
-    if not field_type.strip():
-        return {f"get{suffix}", f"is{suffix}", f"set{suffix}"}
-    getter = f"is{suffix}" if field_type.strip() in {"boolean", "Boolean"} else f"get{suffix}"
-    return {getter, f"set{suffix}"}
-
-
-def _external_accessor_references(
-    graph: SemanticGraph,
-    class_name: str,
-    field_name: str,
-    field_type: str,
-    field_file_path: str,
-) -> list[Reference]:
-    """
-    Return method-call references to a field's accessors outside the declaring file.
-    """
-    references: list[Reference] = []
-    for method_name in _accessor_names(field_name, field_type):
-        method = graph.resolve_method(class_name, method_name)
-        if method is None:
-            continue
-        references.extend(
-            ref
-            for ref in graph.find_references_to(method.id)
-            if ref.ref_type == RefType.METHOD_CALL and ref.file_path != field_file_path
-        )
-    return references
-
-
-def _java_bean_suffix(name: str) -> str:
-    """
-    Convert a field name to the JavaBean accessor suffix.
-    """
-    if not name:
-        return ""
-    if len(name) > 1 and name[0].islower() and name[1].isupper():
-        return name
-    return name[:1].upper() + name[1:]

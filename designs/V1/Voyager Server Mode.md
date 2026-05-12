@@ -1,169 +1,156 @@
 # Voyager V1 Server Mode
 
-## 背景
+## Background
 
-V1 最初的 CLI 模型是一次命令完成一次工作：`scan`、`plan`、`apply` 各自在自己的进程里初始化所需状态。这个模型对静态 parser 影响不大，但对 JDT LS 不合适。
+Voyager runs as a project-scoped Server with the CLI acting as a client. This
+keeps project context, semantic graph state, and JDT LS lifecycle stable across
+`scan -> plan -> apply`.
 
-JDT LS 是一个需要启动、初始化、索引、维护 workspace 的长期服务。把 Voyager 做成一次性命令会导致几个问题：
-
-- 每次命令都可能重新启动和关闭 JDT LS，启动成本高。
-- JDT LS 在 Windows 上 shutdown 时容易输出噪声日志，甚至触发编码/日志异常。
-- `scan -> plan -> apply` 本质上是同一个项目会话，拆成多个短进程会丢失已经 warm up 的 LSP 状态。
-- 后续接 IDE、Agent、TUI 时，CLI 不应该是唯一执行入口。
-
-因此这次改造把 Voyager 从“命令直接执行核心逻辑”调整为“Server 执行，CLI 只是 Client”。
+The original one-command-one-process model was too expensive for JDT LS because
+the language server needs startup, initialization, indexing, and a workspace.
+Server mode lets short-lived CLI commands reuse one warm project session.
 
 ---
 
-## 目标形态
+## Target Shape
 
-```text
-Voyager Clients
-  - CLI
-  - IDE plugin
-  - Agent
-  - future UI/TUI
+```mermaid
+flowchart TD
+    clients["Voyager Clients<br/>CLI<br/>IDE plugin<br/>Agent<br/>future UI/TUI"]
+    server["Voyager Server<br/>owns ProjectSession<br/>owns JDT LS lifecycle<br/>owns ExecutionEngine<br/>serializes patch operations<br/>reads/writes .voyager derived state"]
+    jdtls["JDT LS"]
 
-        |
-        | local JSON request
-        v
-
-Voyager Server
-  - owns ProjectSession
-  - owns JDT LS lifecycle
-  - owns ExecutionEngine
-  - serializes semantic operations
-  - reads/writes .voyager derived state
-
-        |
-        | LSP JSON-RPC over stdio
-        v
-
-JDT LS
+    clients -->|"local JSON request"| server
+    server -->|"LSP JSON-RPC over stdio"| jdtls
 ```
 
-Server 是项目级别的：一个 Java project root 对应一个 Voyager Server。CLI 命令可以短生命周期退出，但 Server 和它持有的 JDT LS 可以持续运行。
+One Java project root maps to one Voyager Server. Multiple terminals inside the
+same project reuse that Server. Different project roots use independent Servers.
 
 ---
 
-## 用户命令
+## User Commands
 
-显式后台启动：
+Start a background Server:
 
 ```bash
 voyager start [project_path]
 ```
 
-显式前台运行：
+Run a foreground Server for debugging:
 
 ```bash
 voyager serve [project_path]
 ```
 
-普通本地使用时，`scan/plan/apply` 会自动启动 Server：
+Normal local flow:
 
 ```bash
 voyager start .
 voyager scan .
-voyager plan rename_field com.shop.UserDTO.userName customerName
+voyager plan patch agent.patch
 voyager apply -y
 voyager stop
 ```
 
-状态查看：
+`scan/plan/apply` auto-start the project Server when needed, so explicit
+`start` is convenient but not mandatory.
+
+Status:
 
 ```bash
 voyager status
 ```
 
-`status` 会显示当前项目的 graph 信息和 Server 是否运行。
-
 ---
 
-## 核心代码结构
+## Core Code Structure
 
 ```text
 src/core/server/
-├── protocol.py     # ServerInfo、协议常量、operation 反序列化
-├── server.py       # VoyagerServer，持有 ProjectSession
-└── client.py       # VoyagerServerClient，供 CLI/未来 IDE/Agent 调用
+|-- protocol.py      # ServerInfo, request constants, patch operation deserialization
+|-- server.py        # VoyagerServer, owns ProjectSession
+`-- client.py        # VoyagerServerClient for CLI/IDE/Agent callers
 
 src/core/session/
-├── project_session.py  # 长生命周期项目会话，持有 LspClient + ExecutionEngine
-└── daemon.py           # 旧 daemon 名称兼容层
+|-- project_session.py  # long-lived project session
+`-- daemon.py           # legacy compatibility aliases
 
 src/voyager_cmd/
-├── main.py        # CLI: start/serve/scan/plan/apply/status/stop
-├── server.py      # python -m voyager_cmd.server 入口
-└── daemon.py      # 旧 daemon 入口兼容层
+|-- main.py         # CLI: start/serve/scan/plan/apply/status/stop
+|-- server.py       # python -m voyager_cmd.server entrypoint
+`-- daemon.py       # legacy compatibility entrypoint
 ```
 
-主路径是 `core.server`。`core.session.daemon` 和 `voyager_cmd.daemon` 只保留兼容，不再代表新的架构概念。
+The main architecture is `core.server` plus `ProjectSession`. Daemon names are
+kept only as compatibility wrappers.
 
 ---
 
-## 生命周期
+## Lifecycle
 
-### 1. 第一次 CLI 请求
+### First CLI Request
 
-```text
-voyager start .
-  -> VoyagerServerClient(project_path).start()
-  -> read .voyager/cache/server.json
-  -> no running server
-  -> start background process:
-     python -m voyager_cmd.server <project_path>
+```mermaid
+flowchart LR
+    start_cmd["voyager start ."]
+    start_cmd --> client_start["VoyagerServerClient(project_path).start()"]
+    client_start --> read_state["read .voyager/cache/server.json"]
+    read_state --> no_server["no running server"]
+    no_server --> bg["start background process<br/>python -m voyager_cmd.server project_path"]
 ```
 
-### 2. Server 启动
+### Server Startup
 
-```text
-voyager_cmd.server
-  -> run_server(project_path)
-  -> VoyagerServer.run()
-  -> ProjectSession.start()
-  -> LspClient(Language.JAVA).start()
-  -> start local TCP server
-  -> write .voyager/cache/server.json
+```mermaid
+flowchart LR
+    entry["voyager_cmd.server"]
+    entry --> run_server["run_server(project_path)"]
+    run_server --> server_run["VoyagerServer.run()"]
+    server_run --> session_start["ProjectSession.start()"]
+    session_start --> lsp_start["LspClient(Language.JAVA).start()"]
+    lsp_start --> tcp["start local TCP server"]
+    tcp --> state["write .voyager/cache/server.json"]
 ```
 
-`scan/plan/apply` 仍然会在没有 Server 时自动启动项目级 Server；`start` 只是把这个生命周期动作显式化，不会构建 semantic graph。
+`ProjectSession` is the long-lived state holder:
 
-`ProjectSession` 是真正的长期状态容器：
+- `LspClient`: JDT LS process and LSP communication state.
+- `ExecutionEngine`: patch plan/apply pipeline.
+- `StorageManager`: graph, pending plan, operation log, server state.
 
-- `LspClient`：JDT LS 进程和 LSP 通信状态。
-- `ExecutionEngine`：plan/apply 管线。
-- `StorageManager`：graph、pending plan、operation log、server state。
+### Later CLI Requests
 
-### 3. 后续 CLI 请求
-
-```text
-voyager plan rename_field com.shop.UserDTO.userName customerName
-  -> read server.json
-  -> ping server
-  -> reuse existing Server and JDT LS
-  -> operation/plan
+```mermaid
+flowchart LR
+    plan_cmd["voyager plan patch agent.patch"]
+    plan_cmd --> read_server["read server.json"]
+    read_server --> ping["ping server"]
+    ping --> reuse["reuse existing Server and JDT LS"]
+    reuse --> plan_method["operation/plan"]
 ```
 
-`apply` 同理复用已启动的 JDT LS，不再为每个命令重启语言服务器。
+`apply` reuses the same Server and does not restart JDT LS.
 
-### 4. 停止
+### Stop
 
-```text
-voyager stop
-  -> server/shutdown
-  -> ProjectSession.close()
-  -> LspClient.shutdown()
-  -> clear .voyager/cache/server.json
+```mermaid
+flowchart LR
+    stop_cmd["voyager stop"]
+    stop_cmd --> shutdown["server/shutdown"]
+    shutdown --> session_close["ProjectSession.close()"]
+    session_close --> lsp_shutdown["LspClient.shutdown()"]
+    lsp_shutdown --> clear["clear .voyager/cache/server.json"]
 ```
 
 ---
 
-## 本地协议
+## Local Protocol
 
-当前协议是 newline-delimited JSON over localhost TCP。它不是最终必须形态，但足够支撑本地 CLI、Agent、IDE 插件的第一阶段集成。
+The current protocol is newline-delimited JSON over localhost TCP. It is a
+minimal local integration layer for CLI, future IDE plugins, and agents.
 
-请求格式：
+Request example:
 
 ```json
 {
@@ -171,61 +158,36 @@ voyager stop
   "method": "operation/plan",
   "params": {
     "operation": {
-      "op": "rename_field",
-      "target": "UserDTO.userName",
-      "to": "customerName"
+      "op": "patch",
+      "patch": "--- a/src/main/java/com/shop/OrderDTO.java\n+++ b/src/main/java/com/shop/OrderDTO.java\n@@ ...\n"
     }
   },
   "token": "..."
 }
 ```
 
-响应格式：
+Current methods:
 
-```json
-{
-  "id": 123,
-  "result": {
-    "is_valid": true,
-    "affected_files": []
-  }
-}
-```
-
-错误格式：
-
-```json
-{
-  "id": 123,
-  "error": {
-    "type": "ValueError",
-    "message": "Unknown Voyager server method: ..."
-  }
-}
-```
-
-当前方法：
-
-| Method | 说明 |
+| Method | Description |
 | --- | --- |
-| `server/ping` | 健康检查，不需要占用 ProjectSession 锁 |
-| `server/status` | 返回 Server 是否运行、pid、project path |
-| `project/scan` | 解析项目并重建 semantic graph |
-| `operation/plan` | 对 operation 做前置校验和影响范围计算 |
-| `operation/apply` | 执行 operation，写盘前后做校验 |
-| `server/shutdown` | 停止 Server 和它持有的 JDT LS |
+| `server/ping` | Health check; does not take the ProjectSession lock |
+| `server/status` | Return Server pid and project path |
+| `project/scan` | Parse project and rebuild semantic graph |
+| `operation/plan` | Validate patch operation and compute affected files |
+| `operation/apply` | Apply patch operation with validation and atomic commit |
+| `server/shutdown` | Stop the Server and its JDT LS process |
 
 ---
 
-## 状态文件
+## State Files
 
-Server 发现信息写在项目内：
+Server discovery info is written under the project:
 
 ```text
 .voyager/cache/server.json
 ```
 
-示例：
+Example:
 
 ```json
 {
@@ -238,213 +200,118 @@ Server 发现信息写在项目内：
 }
 ```
 
-`server.json` 只用于发现本地 Server，不用于请求/响应。真正通信走 localhost TCP。
-
-日志写到：
+Logs are written to:
 
 ```text
 .voyager/cache/server.log
 ```
 
-旧的 `.voyager/cache/session.json` 是 daemon 时代的状态文件。当前 client 会兼容读取并尝试关闭旧 daemon，然后启动新的 Server。
+Temporary patch validation snapshots are written under:
+
+```text
+.voyager/cache/vfs-snapshots/
+```
+
+They are deleted after validation.
 
 ---
 
-## 并发模型
+## Concurrency Model
 
-Server 可以接受多个 client 连接，但 semantic operation 必须串行执行。
-
-原因：
-
-- `ProjectSession` 持有同一个 `ExecutionEngine`。
-- `LspClient` 对应同一个 JDT LS 进程。
-- `scan/apply` 会更新 `.voyager/graph.json` 和内存 graph。
-
-因此 `VoyagerServer` 内部用一个 request lock 串行化这些方法：
+The Server can accept multiple client connections, but project operations are
+serialized with a request lock:
 
 - `project/scan`
 - `operation/plan`
 - `operation/apply`
 - `server/shutdown`
 
-`server/ping` 和 `server/status` 不占用这个锁，避免长时间 `scan/apply` 时健康检查被阻塞，导致 client 误判 Server 已死并启动第二个 Server。
+`server/ping` and `server/status` do not take this lock, so health checks do not
+block behind long scan/apply work.
 
 ---
 
-## scan / plan / apply 的新调用链
+## scan / plan / apply Call Chains
 
 ### scan
 
-```text
-CLI scan
-  -> VoyagerServerClient.scan()
-  -> project/scan
-  -> ProjectSession.scan()
-  -> parse_java_project_async(lsp_client=reused_client)
-  -> GraphBuilder.build()
-  -> StorageManager.save_graph()
+```mermaid
+flowchart LR
+    cli_scan["CLI scan"]
+    cli_scan --> client_scan["VoyagerServerClient.scan()"]
+    client_scan --> project_scan["project/scan"]
+    project_scan --> session_scan["ProjectSession.scan()"]
+    session_scan --> parse["parse_java_project_async(lsp_client=reused_client)"]
+    parse --> build["GraphBuilder.build()"]
+    build --> save["StorageManager.save_graph()"]
 ```
 
 ### plan
 
-```text
-CLI plan
-  -> build Operation model
-  -> VoyagerServerClient.plan(operation)
-  -> operation/plan
-  -> ProjectSession.plan()
-  -> ExecutionEngine.plan_async()
-  -> validate_pre
-  -> compute affected files
-  -> CLI saves pending_plan.json
+```mermaid
+flowchart LR
+    cli_plan["CLI plan patch"]
+    cli_plan --> build_op["build PatchOperation"]
+    build_op --> client_plan["VoyagerServerClient.plan(operation)"]
+    client_plan --> operation_plan["operation/plan"]
+    operation_plan --> session_plan["ProjectSession.plan()"]
+    session_plan --> engine_plan["ExecutionEngine.plan_async()"]
+    engine_plan --> pre["validate_pre"]
+    pre --> vfs["VFS transaction"]
+    vfs --> snapshot["snapshot validation"]
+    snapshot --> affected["compute affected files"]
+    affected --> pending["CLI saves pending_plan.json only when valid"]
 ```
 
 ### apply
 
-```text
-CLI apply
-  -> read pending_plan.json
-  -> VoyagerServerClient.apply(operation)
-  -> operation/apply
-  -> ProjectSession.apply()
-  -> ExecutionEngine.apply_async()
-  -> validate_pre
-  -> LSP prepareRename + rename
-  -> apply edits in memory
-  -> rebuild graph
-  -> validate_post
-  -> commit files
-  -> save graph + operation log
+```mermaid
+flowchart LR
+    cli_apply["CLI apply"]
+    cli_apply --> read_pending["read pending_plan.json"]
+    read_pending --> client_apply["VoyagerServerClient.apply(operation)"]
+    client_apply --> operation_apply["operation/apply"]
+    operation_apply --> session_apply["ProjectSession.apply()"]
+    session_apply --> engine_apply["ExecutionEngine.apply_async()"]
+    engine_apply --> pre_apply["validate_pre"]
+    pre_apply --> vfs_apply["VFS transaction"]
+    vfs_apply --> snapshot_apply["snapshot validation"]
+    snapshot_apply --> rebuild["rebuild graph"]
+    rebuild --> post["validate_post"]
+    post --> commit["commit files"]
+    commit --> persist["save graph + operation log"]
 ```
 
 ---
 
-## JDT LS 生命周期变化
+## Verification
 
-改造前：
-
-```text
-voyager scan
-  -> start JDT LS
-  -> scan
-  -> shutdown JDT LS
-
-voyager apply
-  -> start JDT LS again
-  -> rename
-  -> shutdown JDT LS again
-```
-
-改造后：
-
-```text
-voyager start
-  -> start Voyager Server
-  -> start JDT LS once
-
-voyager scan
-  -> scan
-
-voyager plan
-  -> reuse Server
-
-voyager apply
-  -> reuse Server and JDT LS
-
-voyager stop
-  -> shutdown JDT LS once
-  -> stop Server
-```
-
-这个模型更接近 IDE 和 Agent 的运行方式：项目上下文持续存在，命令只是对上下文发请求。
-
----
-
-## affected files 逻辑修正
-
-Server 化验证时暴露了一个旧问题：`plan` 对 `rename_field` 的影响文件估计偏小。
-
-示例：
-
-```java
-String name = user.getUserName();
-```
-
-JDT LS 在 rename field `userName -> customerName` 时会同步改 JavaBean getter/setter：
-
-```java
-String name = user.getCustomerName();
-```
-
-旧的 semantic graph 只记录 field access 和类型引用，因此 `plan` 可能只显示 `UserDTO.java`，但 `apply` 实际会修改 `OrderService.java`、`UserDTO.java`、`UserService.java`。
-
-这次补了两层：
-
-- `GraphBuilder` 增加保守的 typed method call reference。
-- `SemanticGraph.get_affected_files_for_field()` 会把 JavaBean accessor 方法及其调用文件纳入 affected files。
-
-这样 `plan` 的输出更接近 JDT LS rename 的真实修改范围。
-
----
-
-## 兼容策略
-
-为了避免一次重构破坏旧入口，保留兼容层：
-
-- `src/core/session/daemon.py`
-  - `VoyagerDaemonClient = VoyagerServerClient`
-  - `VoyagerDaemonServer = VoyagerServer`
-  - `run_daemon()` 转到 `run_server()`
-
-- `src/voyager_cmd/daemon.py`
-  - 旧 `python -m voyager_cmd.daemon <project_path>` 仍然能启动新 Server。
-
-未来如果确认没有旧引用，可以删除兼容层。
-
----
-
-## 验证方式
-
-单元测试：
+Unit tests:
 
 ```bash
-python -m compileall -q src tests
+python -m compileall -q src tests examples/e2e_v1.py
 python -m pytest -q
 ```
 
-手工流程：
+Example regression:
 
 ```bash
-python examples/reset.py shop-dto
-cd examples/shop-dto
-voyager -v start .
-voyager -v scan .
-voyager plan rename_field com.shop.UserDTO.userName customerName
-voyager apply -y
-voyager stop
+python examples/e2e_v1.py
 ```
 
-期望：
+Expected:
 
-- `start` 显式启动项目级 Server，后续 `scan/plan/apply` 复用同一个 Server。
-- 如果没有提前 `start`，`scan/plan/apply` 仍会自动启动当前项目的 Server。
-- `plan` 报 3 个 affected files：
-  - `src/main/java/com/shop/OrderService.java`
-  - `src/main/java/com/shop/UserDTO.java`
-  - `src/main/java/com/shop/UserService.java`
-- `apply` 修改同样 3 个文件。
-- `stop` 后 `.voyager/cache/server.json` 被清理。
+- patch set flow passes,
+- file create/modify/move/delete lifecycle flow passes,
+- multi-project Server isolation flow passes,
+- Servers started by the script are stopped.
 
 ---
 
-## 后续方向
+## Next Directions
 
-当前协议是本地最小实现。下一步可以演进，但不急着引入复杂基础设施：
-
-- 增加 progress notification，用于长时间 scan/index。
-- 增加 cancel request，用于取消长任务。
-- 增加轻量级 registry/broker，便于 IDE/Agent 发现多个项目级 Server，但保持一个 project root 对应一个 Server 的隔离边界。
-- 为 IDE/Agent 暴露更稳定的 JSON-RPC schema。
-- 把 Server 集成测试扩展到真实 CLI 自动启动路径。
-
-核心边界不变：Server 是执行者，CLI/IDE/Agent 都是 Client。
+- Add progress notifications for long scan/index operations.
+- Add cancel requests for long-running work.
+- Expose a stable JSON-RPC schema for IDE/Agent integrations.
+- Strengthen snapshot validation diagnostics.
+- Keep the boundary clear: Server executes patch transactions; CLI, IDE, and Agent are clients.

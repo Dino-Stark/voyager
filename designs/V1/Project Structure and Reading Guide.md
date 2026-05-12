@@ -1,6 +1,12 @@
 # Project Structure And Reading Guide
 
-This guide reflects the current V1 code structure after the Server-mode refactor.
+This guide reflects the current V1 code structure after the Server-mode and
+patch-first refactors.
+
+Project documentation should prefer Mermaid for architecture, flow, lifecycle,
+and state-transition diagrams. Directory structures should stay as plain fenced
+text trees because they are path indexes, not rendered diagrams. Keep fenced
+`bash`, `json`, `python`, or plain path snippets when they are literal examples.
 
 ---
 
@@ -22,16 +28,20 @@ Use these as supporting references:
 
 ## Runtime Model
 
-```text
-CLI command
-  -> VoyagerServerClient
-  -> VoyagerServer
-  -> ProjectSession
-  -> ExecutionEngine
-  -> LspClient / JDT LS
+```mermaid
+flowchart LR
+    cli["CLI command"]
+    client["VoyagerServerClient"]
+    server["VoyagerServer"]
+    session["ProjectSession"]
+    engine["ExecutionEngine"]
+    lsp["LspClient / JDT LS"]
+
+    cli --> client --> server --> session --> engine --> lsp
 ```
 
-The CLI is a client. The project-scoped Server owns the long-lived project state and JDT LS process.
+The CLI is a client. The project-scoped Server owns the long-lived project state
+and JDT LS process.
 
 ---
 
@@ -39,26 +49,27 @@ The CLI is a client. The project-scoped Server owns the long-lived project state
 
 ```text
 src/
-├── voyager_cmd/
-│   ├── main.py          # CLI commands
-│   ├── server.py        # explicit server module entrypoint
-│   └── daemon.py        # legacy compatibility entrypoint
-├── cli/commands/
-│   ├── scan.py
-│   ├── plan.py
-│   └── apply.py
-├── core/
-│   ├── server/          # VoyagerServer, client, local protocol
-│   ├── session/         # ProjectSession and legacy daemon aliases
-│   ├── parser/          # Java parser: LSP first, static fallback
-│   ├── graph/           # SemanticGraph and GraphBuilder
-│   ├── operation/       # operation/result models
-│   ├── engine/          # plan/apply pipeline
-│   ├── lsp/             # LSP client and language config
-│   ├── rules/           # validators
-│   └── diff/            # minimal diff utility
-├── storage/             # .voyager storage manager
-└── utils/               # async helper
+|-- voyager_cmd/          # CLI entrypoints and runner API
+|   |-- main.py
+|   |-- server.py
+|   `-- daemon.py
+|-- cli/commands/         # scan/plan/apply presentation
+|   |-- scan.py
+|   |-- plan.py
+|   `-- apply.py
+|-- core/
+|   |-- server/           # VoyagerServer, client, local protocol
+|   |-- session/          # ProjectSession and legacy aliases
+|   |-- parser/           # Java parser: LSP first, static fallback
+|   |-- graph/            # SemanticGraph and GraphBuilder
+|   |-- operation/        # patch-only operation/result models
+|   |-- engine/           # plan/apply pipeline
+|   |-- vfs/              # virtual filesystem transaction
+|   |-- lsp/              # LSP client and language config
+|   |-- rules/            # validators
+|   `-- diff/             # patch parser and applier
+|-- storage/              # .voyager storage manager
+`-- utils/                # async helper
 ```
 
 ---
@@ -69,13 +80,14 @@ Voyager stores derived state under the scanned Java project:
 
 ```text
 .voyager/
-├── graph.json
-├── pending_plan.json
-├── operations.log
-├── rules.yaml
-└── cache/
-    ├── server.json
-    └── server.log
+|-- graph.json
+|-- pending_plan.json
+|-- operations.log
+|-- rules.yaml
+`-- cache/
+    |-- server.json
+    |-- server.log
+    `-- vfs-snapshots/
 ```
 
 `.voyager/` is rebuildable derived state. It is not source of truth.
@@ -99,12 +111,14 @@ Voyager stores derived state under the scanned Java project:
 3. `src/core/session/project_session.py`
 4. `src/storage/manager.py`
 
-### Understand Rename Execution
+### Understand Patch Execution
 
 1. `src/core/operation/models.py`
 2. `src/core/engine/execution_engine.py`
-3. `src/core/lsp/client.py`
-4. `src/core/rules/validator.py`
+3. `src/core/vfs/transaction.py`
+4. `src/core/diff/patch_engine.py`
+5. `src/core/lsp/client.py`
+6. `src/core/rules/validator.py`
 
 ### Understand Graph Construction
 
@@ -125,25 +139,28 @@ Voyager stores derived state under the scanned Java project:
 voyager start [project_path]
 voyager serve [project_path]
 voyager scan <project_path>
-voyager plan rename_field <package.Class.field> <new_name>
-voyager plan rename_method <package.Class.method> <new_name>
-voyager plan rename_class <package.Class> <new_name>
+voyager plan patch <patch_file> [<patch_file>...]
 voyager apply -y
 voyager status
 voyager stop
 ```
 
-`start` explicitly starts the project-scoped Server in the background. `scan/plan/apply` still auto-start a Server for local usage when needed. `serve` runs the Server in the foreground for debugging or supervised integrations.
+`start` explicitly starts the project-scoped Server in the background.
+`scan/plan/apply` still auto-start a Server for local usage when needed. `serve`
+runs the Server in the foreground for debugging or supervised integrations.
 
-One project root maps to one Server process. Multiple terminals or conversations in the same project reuse that Server; different project roots use independent Server processes.
+One project root maps to one Server process. Multiple terminals or conversations
+in the same project reuse that Server; different project roots use independent
+Server processes.
 
 ---
 
 ## Current V1 Limits
 
 - Only Java is implemented.
-- `rename_field`, `rename_method`, and `rename_class` use the LSP rename pipeline.
-- Rename operation targets must use fully qualified class names.
-- Applying rename operations requires JDT LS.
+- The public edit API is patch-only.
+- File create/delete/move and semantic refactors should be represented as unified diffs.
+- Patch validation uses a VFS transaction and a temporary `.voyager/cache/vfs-snapshots` project snapshot.
+- LSP snapshot validation runs when JDT LS is available.
 - Static parsing is intentionally conservative.
 - Full call graph, Spring DI, Lombok generated-code analysis, reflection, and dynamic proxies are out of V1 scope.

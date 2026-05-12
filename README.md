@@ -1,109 +1,93 @@
 # Voyager
 
-> 将代码修改从"文本操作"升级为"语义操作"
+Voyager is a semantic code modification system for coding agents. V1 focuses on
+one practical workflow: agents submit unified diff patch sets, Voyager validates
+them against a Java project graph, and commits them atomically.
 
-Voyager 是一个语义级的代码修改系统，保证代码修改的全局一致性。
+## V1 Goal
 
-## V1 目标
+Make CLI-first code changes safer by combining:
 
-安全地对 DTO 字段进行重命名，并自动更新所有引用（跨文件一致性）。
+- patch-only public edit API,
+- virtual filesystem transactions,
+- Java semantic graph rebuilds,
+- optional JDT LS-backed snapshot validation,
+- all-or-nothing commit and rollback.
 
-## 依赖要求
+## Requirements
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| Python | >= 3.10 | Voyager 运行基础 |
-| JDK | 17+ | JDTLS 需要独立的 JDK 运行环境 |
-| 网络连接 | - | 首次安装时下载 JDT Language Server |
+| Dependency | Version | Notes |
+| --- | --- | --- |
+| Python | >= 3.10 | Runtime |
+| JDK | 17+ | Required by JDT LS |
+| JDT LS | current | Optional for static tests, recommended for semantic validation |
 
-## 快速开始
+## Quick Start
 
-### 1. 安装
+Install in editable mode:
 
 ```bash
-# 安装 Python 包
 pip install -e .
-
-# 下载并安装 JDT Language Server (Java 语义分析引擎)
-python -m scripts.setup_jdtls
 ```
 
-### 2. 验证安装
+Install or check JDT LS:
 
 ```bash
-# 检查 JDTLS 安装状态
+python -m scripts.setup_jdtls
 python -m scripts.setup_jdtls --check
 ```
 
-### 3. 分析项目
+Run Voyager in a Java project:
 
 ```bash
 cd /path/to/java/project
 voyager start .
 voyager scan .
-```
-
-### 4. 规划重命名
-
-```bash
-voyager plan rename_field com.example.OrderDTO.userId customerId
-```
-
-### 5. 执行修改
-
-```bash
-voyager apply
-```
-
-### 6. 停止项目 Server
-
-```bash
+voyager plan patch agent.patch
+voyager apply -y
 voyager stop
 ```
 
-`voyager start` 会显式启动当前项目的后台 Server。`scan/plan/apply` 仍会在需要时自动启动当前项目的 Server。每个 project root 对应一个 Server 进程和一个 JDTLS 会话；同一项目的多个终端/会话会复用同一个 Server，不同项目会使用不同 Server。
+`scan/plan/apply` auto-start the project Server when needed, but explicit
+`start` makes the lifecycle visible.
 
-## JDTLS 安装说明
+## Patch Workflow
 
-Voyager 使用 Eclipse JDT Language Server 进行 Java 语义分析。`setup_jdtls.py` 脚本会自动检测操作系统和架构，下载对应版本的 JDTLS (~150MB)。
-
-| 参数 | 说明 |
-|------|------|
-| `--check` | 检查安装状态 |
-| `--os` | 指定操作系统 (windows/linux/darwin) |
-| `--arch` | 指定架构 (x64/arm64) |
-| `--force` | 强制重新安装 |
+Voyager accepts one or more patch files:
 
 ```bash
-# 示例：指定平台安装
-python -m scripts.setup_jdtls --os windows --arch x64
-
-# 强制重新安装
-python -m scripts.setup_jdtls --force
+voyager plan patch agent-1.patch agent-2.patch
+voyager apply -y
 ```
 
-## 核心原则
+Patch files may:
 
-1. **语义优先** - 所有操作基于 symbol/AST，禁止纯字符串替换
-2. **正确性 > 智能** - 不确定则拒绝执行
-3. **强一致性** - All-or-nothing，任意失败则回滚
-4. **可回滚** - 每次操作可撤销
-5. **可验证** - 修改后重新解析并通过规则检查
+- modify existing files,
+- create files with `/dev/null` as the old path,
+- delete files with `/dev/null` as the new path,
+- move files with git-style `rename from` / `rename to` metadata,
+- apply multiple ordered patches to the same virtual file.
 
-## V1 限制
+## Core Principles
 
-- 仅支持普通 POJO DTO
-- 仅支持明确类型引用
-- 不支持反射/动态代理
-- 不支持 Lombok / Spring 自动注入分析
+1. Patch-first: agents produce diffs with normal CLI/editor tools.
+2. Semantic validation: Voyager rebuilds the Java graph after the virtual change.
+3. Conservative failure: invalid patches touch no source files.
+4. Atomic commit: partial writes are rolled back.
+5. Project-scoped Server: one project root maps to one reusable Server and JDT LS lifecycle.
 
-## 参考文档
+## Verification
 
-- [LSP 3.18 Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/) — Language Server Protocol 官方协议定义
-- [LSP Specification (main)](https://microsoft.github.io/language-server-protocol/) — 稳定版规范入口
-- [Eclipse JDT Language Server](https://github.com/eclipse-jdtls/eclipse.jdt.ls) — Voyager V1 使用的 Java 语言服务器
-- [LSP documentSymbol](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_documentSymbol) — 项目解析使用的 LSP 方法
-- [LSP textDocument/rename](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_rename) — 字段重命名使用的 LSP 方法
-- `designs/V1/Architecture V1.md` — 当前 V1 总体架构
-- `designs/V1/Voyager Server Mode.md` — 项目级 Server 与 JDTLS 生命周期
-- `designs/V1/JDTLS Dependency Management.md` — JDTLS 安装、发现和运行时说明
+```bash
+python -m compileall -q src tests examples/e2e_v1.py
+python -m pytest -q
+python examples/e2e_v1.py
+```
+
+## Documentation
+
+- [Architecture V1](designs/V1/Architecture%20V1.md)
+- [Apply Pipeline](designs/V1/Apply%20Pipeline.md)
+- [Voyager Server Mode](designs/V1/Voyager%20Server%20Mode.md)
+- [Manual Test Steps](designs/V1/Manual%20Test%20Steps%20for%20Rename%20Field.md)
+- [JDT LS Dependency Management](designs/V1/JDTLS%20Dependency%20Management.md)

@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from core.operation.models import RenameFieldOperation
+from core.operation.models import PatchOperation
 from core.server.client import VoyagerServerClient
 from core.server.server import VoyagerServer
 
@@ -102,7 +102,14 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     assert client.scan()["symbols_count"] == 1
     assert server.session.scan_calls == 1
 
-    operation = RenameFieldOperation(target="com.shop.UserDTO.userName", to="customerName")
+    operation = PatchOperation(
+        patch="""--- a/UserDTO.java
++++ b/UserDTO.java
+@@ -1,1 +1,1 @@
+-class UserDTO {}
++class CustomerDTO {}
+"""
+    )
     assert client.plan(operation)["affected_files"] == ["UserDTO.java"]
     assert client.apply(operation)["modified_files"] == ["UserDTO.java"]
     assert client.shutdown()["ok"] is True
