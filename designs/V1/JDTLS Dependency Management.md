@@ -136,8 +136,10 @@ Responsibilities:
 - read responses and diagnostics,
 - expose semantic methods:
   - `get_symbols()`
-  - `prepare_rename()`
-  - `rename_symbol()`
+  - `get_references()`
+  - `find_definitions()`
+  - `find_implementations()`
+  - `wait_for_diagnostics()`
 - shut down the subprocess on `voyager stop`.
 
 Server mode owns the long-lived `LspClient` for project scan and graph loading.

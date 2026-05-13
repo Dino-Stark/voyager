@@ -144,7 +144,7 @@ def run_shop_dto_patch_set_flow() -> None:
 
 def run_shop_dto_file_lifecycle_patch_flow() -> None:
     """
-    Verify create, modify, rename, and delete file changes through VFS patches.
+    Verify create, modify, move, and delete file changes through VFS patches.
     """
     reset("shop-dto")
     project = EXAMPLES_DIR / "shop-dto"

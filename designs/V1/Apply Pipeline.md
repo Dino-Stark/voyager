@@ -65,9 +65,8 @@ Supported patch effects:
 - move and modify a file in the same patch section,
 - apply multiple patch files to the same virtual file in order.
 
-Voyager does not expose separate public operations for semantic rename,
-field add/remove, or file add/remove/move. Those changes should be represented
-as patches.
+Voyager does not expose separate public edit operations. Source and file changes
+should be represented as patches.
 
 ---
 
@@ -145,7 +144,7 @@ their original content and moved destinations are removed.
 
 ## Current V1 Limits
 
-- `patch` applies unified diffs exactly; it is not a semantic refactoring operation.
+- `patch` applies unified diffs exactly; it does not infer edit intent or transform source beyond the supplied patch.
 - JDT LS snapshot diagnostics are skipped when JDT LS is unavailable or the project lacks Java build metadata.
 - Static parsing is intentionally conservative.
 - The semantic graph records conservative typed references; it is not a full Java PSI or call graph.

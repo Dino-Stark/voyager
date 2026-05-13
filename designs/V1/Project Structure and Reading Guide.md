@@ -17,7 +17,7 @@ Read these first:
 1. [Architecture V1.md](./Architecture%20V1.md)
 2. [Voyager Server Mode.md](./Voyager%20Server%20Mode.md)
 3. [Apply Pipeline.md](./Apply%20Pipeline.md)
-4. [Manual Test Steps for Rename Field.md](./Manual%20Test%20Steps%20for%20Rename%20Field.md)
+4. [Manual Test Steps for Patch Flow.md](./Manual%20Test%20Steps%20for%20Patch%20Flow.md)
 
 Use these as supporting references:
 
@@ -159,7 +159,7 @@ Server processes.
 
 - Only Java is implemented.
 - The public edit API is patch-only.
-- File create/delete/move and semantic refactors should be represented as unified diffs.
+- File create/delete/move and source edits should be represented as unified diffs.
 - Patch validation uses a VFS transaction and a temporary `.voyager/cache/vfs-snapshots` project snapshot.
 - LSP snapshot diagnostics run when JDT LS is available and the project has Java build metadata.
 - Static parsing is intentionally conservative.

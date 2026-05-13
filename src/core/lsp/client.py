@@ -99,9 +99,8 @@ class LspSymbolInfo:
             clients to determine whether a cursor position falls *inside* the
             symbol (for "reveal in sidebar" / navigation).  Not used by Voyager.
         selection_range: The span that should be selected when the user
-            navigates to / reveals this symbol, typically just the name.
-            Voyager uses this for source position (line / column) and as the
-            cursor anchor when requesting LSP rename.
+        navigates to / reveals this symbol, typically just the name.
+            Voyager uses this for source position (line / column).
         children: Nested symbols, e.g. fields and methods inside a class.
     """
 
@@ -130,26 +129,6 @@ class LspTextEdit:
 
     range: LspRange
     new_text: str
-
-
-@dataclass
-class LspWorkspaceEdit:
-    """
-    A parsed subset of :lsp:`WorkspaceEdit`.
-
-    The core result of an LSP rename operation.  V1 supports the two common
-    shapes emitted by language servers: ``changes`` (map of URI to edits) and
-    ``documentChanges`` (list of text document edits with explicit URIs).
-
-    Attributes:
-        changes: Map of file URI to the list of edits that apply to that file.
-    """
-
-    changes: dict[str, list[LspTextEdit]] = field(default_factory=dict)
-
-    @property
-    def is_empty(self) -> bool:
-        return not any(self.changes.values())
 
 
 def path_to_uri(path: Path) -> str:
@@ -270,7 +249,6 @@ class LspClient:
                         "definition": {"dynamicRegistration": False},
                         "references": {"dynamicRegistration": False},
                         "implementation": {"dynamicRegistration": False},
-                        "rename": {"prepareSupport": True},
                         "documentSymbol": {
                             "dynamicRegistration": False,
                             "hierarchicalDocumentSymbolSupport": True,
@@ -427,38 +405,6 @@ class LspClient:
         )
         items = result if isinstance(result, list) else [result] if result else []
         return [self._parse_location(item) for item in items]
-
-    async def prepare_rename(self, file_path: Path, position: LspPosition) -> LspRange | None:
-        """Ask the server whether a location can be renamed."""
-
-        await self.open_file(file_path)
-        result = await self._send_request(
-            "textDocument/prepareRename",
-            {
-                "textDocument": {"uri": path_to_uri(file_path)},
-                "position": position.to_lsp(),
-            },
-        )
-        if not result:
-            return None
-        raw_range = result.get("range", result)
-        return self._parse_range(raw_range)
-
-    async def rename_symbol(
-        self, file_path: Path, position: LspPosition, new_name: str
-    ) -> LspWorkspaceEdit:
-        """Use ``textDocument/rename`` to produce semantic edits."""
-
-        await self.open_file(file_path)
-        result = await self._send_request(
-            "textDocument/rename",
-            {
-                "textDocument": {"uri": path_to_uri(file_path)},
-                "position": position.to_lsp(),
-                "newName": new_name,
-            },
-        )
-        return self._parse_workspace_edit(result or {})
 
     async def get_diagnostics(self, file_path: Path) -> list[dict[str, Any]]:
         """Return the latest diagnostics published for a file."""
@@ -700,24 +646,6 @@ class LspClient:
             log("LSP: %s", _safe_log_text(msg))
         elif method == "window/showMessage":
             logger.info("LSP message: %s", _safe_log_text(str(params.get("message", ""))))
-
-    def _parse_workspace_edit(self, raw: dict[str, Any]) -> LspWorkspaceEdit:
-        edit = LspWorkspaceEdit()
-
-        for uri, text_edits in raw.get("changes", {}).items():
-            edit.changes.setdefault(uri, []).extend(
-                self._parse_text_edit(item) for item in text_edits
-            )
-
-        for change in raw.get("documentChanges", []) or []:
-            if "textDocument" not in change:
-                continue
-            uri = change["textDocument"]["uri"]
-            edit.changes.setdefault(uri, []).extend(
-                self._parse_text_edit(item) for item in change.get("edits", [])
-            )
-
-        return edit
 
     def _parse_symbols(self, raw: list[dict[str, Any]], uri: str) -> list[LspSymbolInfo]:
         symbols: list[LspSymbolInfo] = []

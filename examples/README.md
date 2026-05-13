@@ -37,9 +37,9 @@ voyager plan patch agent-1.patch agent-2.patch
 Patch files can modify existing files, create files, delete files, and use
 git-style rename metadata. When JDT LS is available for a Maven/Gradle/Eclipse
 project, planned patches must leave the temporary snapshot free of Java error
-diagnostics; partial renames that only change a field declaration but not its
-accessors or callers are rejected. Run one scenario at a time from a fresh reset
-so each expected file list stays independent.
+diagnostics; partial symbol updates that only change a field declaration but not
+its accessors or callers are rejected. Run one scenario at a time from a fresh
+reset so each expected file list stays independent.
 
 ## E2E regression
 

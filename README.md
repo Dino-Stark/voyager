@@ -89,5 +89,5 @@ python examples/e2e_v1.py
 - [Architecture V1](designs/V1/Architecture%20V1.md)
 - [Apply Pipeline](designs/V1/Apply%20Pipeline.md)
 - [Voyager Server Mode](designs/V1/Voyager%20Server%20Mode.md)
-- [Manual Test Steps](designs/V1/Manual%20Test%20Steps%20for%20Rename%20Field.md)
+- [Manual Test Steps](designs/V1/Manual%20Test%20Steps%20for%20Patch%20Flow.md)
 - [JDT LS Dependency Management](designs/V1/JDTLS%20Dependency%20Management.md)

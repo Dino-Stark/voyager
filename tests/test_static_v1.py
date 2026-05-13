@@ -123,13 +123,9 @@ public class UserService {
     assert {ref.extra["receiver"] for ref in method_refs} == {"user", "this.current"}
 
 
-def test_cli_rejects_structured_edit_operations() -> None:
+def test_cli_rejects_non_patch_operations() -> None:
     with pytest.raises(ValueError, match="patch-only"):
-        _build_operation("rename_field", "com.shop.UserDTO.userName", "customerName")
-    with pytest.raises(ValueError, match="patch-only"):
-        _build_operation("add_field", "com.shop.OrderDTO", "giftMessage", ["String"])
-    with pytest.raises(ValueError, match="patch-only"):
-        _build_operation("remove_field", "com.shop.OrderDTO", "giftMessage")
+        _build_operation("custom_operation", "com.shop.UserDTO.userName", "customerName")
 
 
 def test_cli_builds_patch_operation(tmp_path: Path) -> None:
