@@ -56,7 +56,8 @@ src/
 |-- cli/commands/         # scan/plan/apply presentation
 |   |-- scan.py
 |   |-- plan.py
-|   `-- apply.py
+|   |-- apply.py
+|   `-- errors.py
 |-- core/
 |   |-- server/           # VoyagerServer, client, local protocol
 |   |-- session/          # ProjectSession and legacy aliases
@@ -142,6 +143,8 @@ voyager scan <project_path>
 voyager plan patch <patch_file> [<patch_file>...]
 voyager apply -y
 voyager status
+voyager progress
+voyager cancel
 voyager stop
 ```
 
@@ -162,6 +165,14 @@ Server processes.
 - File create/delete/move and source edits should be represented as unified diffs.
 - Patch validation uses a VFS transaction and a temporary `.voyager/cache/vfs-snapshots` project snapshot.
 - LSP snapshot diagnostics run when JDT LS is available and the project has Java build metadata.
+- `voyager status` reports JDT LS availability, Java build metadata detection,
+  and whether snapshot diagnostics are active.
+- `voyager progress` and `voyager cancel` expose the current Server protocol
+  skeleton. Cancel requests are recorded, but V1 does not yet interrupt work
+  inside scan, JDT LS, or apply checkpoints.
 - Static parsing is intentionally conservative.
-- The graph records conservative typed field/method/class references, including simple typed method calls, but it is not a full Java PSI or call graph.
+- The graph records conservative typed field/method/class references and method
+  IDs include parameter signatures, but it is not a full Java PSI or call graph.
+- Patch inputs and targets are UTF-8 text only; binary, symlink, chmod/mode-only,
+  and non-UTF-8 target patches are rejected.
 - Full call graph, Spring DI, Lombok generated-code analysis, reflection, and dynamic proxies are out of V1 scope.

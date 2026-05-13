@@ -5,6 +5,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
+from cli.commands.errors import print_operation_errors
 from core.operation.models import (
     ApplyResult,
     Operation,
@@ -59,9 +60,7 @@ def apply_plan(skip_confirm: bool = False) -> dict | None:
 
         storage.clear_pending_plan()
     else:
-        console.print("[red]Operation failed.[/red]")
-        for err in result.errors:
-            console.print(f"  [red]Error:[/red] {err}")
+        print_operation_errors(console, "[red]Operation failed.[/red]", result.errors)
 
     return result.model_dump(mode="json") if hasattr(result, 'model_dump') else None
 

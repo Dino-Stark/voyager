@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from core.graph.semantic_graph import RefType, Reference, SemanticGraph, Symbol, SymbolType
-from core.parser.java_parser import JavaClass
+from core.parser.java_parser import JavaClass, JavaMethod
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,11 @@ class GraphBuilder:
             )
 
         for method in cls.methods:
+            method_id = _method_symbol_id(class_id, method)
+            parameter_types = [_normalize_signature_type(param.type_name) for param in method.parameters]
             self._graph.symbols.append(
                 Symbol(
-                    id=f"{class_id}.{method.name}",
+                    id=method_id,
                     type=SymbolType.METHOD,
                     name=method.name,
                     file_path=file_path,
@@ -99,6 +101,8 @@ class GraphBuilder:
                             {"name": param.name, "type_name": param.type_name}
                             for param in method.parameters
                         ],
+                        "parameter_types": parameter_types,
+                        "signature": _method_signature(method),
                         "modifiers": method.modifiers,
                     },
                 )
@@ -122,7 +126,7 @@ class GraphBuilder:
                 )
 
         for method in cls.methods:
-            from_symbol = f"{class_id}.{method.name}"
+            from_symbol = _method_symbol_id(class_id, method)
             if method.return_type:
                 target = self._resolve_type(method.return_type, cls)
                 if target:
@@ -271,18 +275,19 @@ class GraphBuilder:
         receiver: str,
     ) -> None:
         member = match.group("member")
-        known_methods = {method.name for method in target_cls.methods}
-        if member not in known_methods:
+        matching_methods = [method for method in target_cls.methods if method.name == member]
+        if len(matching_methods) != 1:
             return
+        target_method = matching_methods[0]
         from_symbol = self._nearest_method_id(cls, text, match.start()) or cls.fqn
         self._add_reference(
             from_symbol,
-            f"{target_cls.fqn}.{member}",
+            _method_symbol_id(target_cls.fqn, target_method),
             RefType.METHOD_CALL,
             file_path,
             text.count("\n", 0, match.start()) + 1,
             match.start() - text.rfind("\n", 0, match.start()),
-            {"receiver": receiver},
+            {"receiver": receiver, "signature": _method_signature(target_method)},
         )
 
     def _collect_variable_types(self, text: str, cls: JavaClass) -> dict[str, str]:
@@ -310,7 +315,7 @@ class GraphBuilder:
         if not previous:
             return None
         method = max(previous, key=lambda item: item.line)
-        return f"{cls.fqn}.{method.name}"
+        return _method_symbol_id(cls.fqn, method)
 
     def _resolve_type(self, type_name: str, context: JavaClass) -> str | None:
         for candidate in _type_candidates(type_name):
@@ -394,6 +399,23 @@ def _type_candidates(type_name: str) -> list[str]:
         "Optional",
     }
     return [token for token in tokens if token not in primitives]
+
+
+def _method_symbol_id(class_id: str, method: JavaMethod) -> str:
+    return f"{class_id}.{_method_signature(method)}"
+
+
+def _method_signature(method: JavaMethod) -> str:
+    parameter_types = [_normalize_signature_type(param.type_name) for param in method.parameters]
+    return f"{method.name}({','.join(parameter_types)})"
+
+
+def _normalize_signature_type(type_name: str) -> str:
+    clean = re.sub(r"\s+", " ", type_name.strip())
+    clean = clean.replace(" ...", "...")
+    clean = clean.replace("...", "[]")
+    clean = re.sub(r"\s*([<>,\[\]])\s*", r"\1", clean)
+    return clean
 
 
 def _receiver_call_matches(text: str, receiver: str) -> list[re.Match[str]]:

@@ -68,6 +68,10 @@ Supported patch effects:
 Voyager does not expose separate public edit operations. Source and file changes
 should be represented as patches.
 
+V1 only models UTF-8 text patch transactions. It explicitly rejects binary patch
+metadata, symlink patch metadata, chmod/mode-only metadata, and target files that
+cannot be decoded as UTF-8.
+
 ---
 
 ## Snapshot Validation
@@ -87,12 +91,21 @@ Eclipse `.classpath`/`.project`), Voyager starts a short-lived LSP client rooted
 at the snapshot, enables diagnostics, opens Java files in the snapshot, and
 rejects any error-level diagnostics before committing.
 
+When Maven or Gradle is available for the snapshot, Voyager also runs a compile
+check as a deterministic backstop. This catches compile/type errors even if a
+local JDT LS instance does not publish diagnostics before the validation window
+expires.
+
 The project Server still owns a long-lived LSP client for the real project.
 Snapshot validation deliberately uses its own LSP client because diagnostics
 must refer to the virtual final state, not the live source tree. If JDT LS is
 unavailable, or the project has no Java build metadata, snapshot diagnostic
 validation is skipped and Voyager relies on exact patch/VFS validation plus
 static graph rebuild.
+
+Diagnostic failures are returned as structured error details and the CLI groups
+them by file with line/column output. The human message still includes a short
+preview, but clients should prefer the structured `details.diagnostics` payload.
 
 The snapshot is deleted after validation.
 
@@ -134,9 +147,14 @@ their original content and moved destinations are removed.
 | patch deletes a missing virtual file | validation error, no files touched |
 | patch moves a missing file | validation error, no files touched |
 | patch moves to an existing file | validation error, no files touched |
+| binary patch metadata | validation error, no files touched |
+| symlink patch metadata | validation error, no files touched |
+| chmod or mode-only patch metadata | validation error, no files touched |
+| target file is not UTF-8 text | validation error, no files touched |
 | patch set produces no final changes | validation error, no files touched |
 | LSP snapshot validation fails | validation error, no files touched |
 | LSP snapshot reports error diagnostics | validation error, no files touched |
+| snapshot compile check fails | validation error, no files touched |
 | post-validation finds duplicate definitions | invalid result, no files touched |
 | write failure | rollback attempted, error result |
 
@@ -147,4 +165,4 @@ their original content and moved destinations are removed.
 - `patch` applies unified diffs exactly; it does not infer edit intent or transform source beyond the supplied patch.
 - JDT LS snapshot diagnostics are skipped when JDT LS is unavailable or the project lacks Java build metadata.
 - Static parsing is intentionally conservative.
-- The semantic graph records conservative typed references; it is not a full Java PSI or call graph.
+- Method symbol IDs include parameter types, but the semantic graph remains a conservative Java/DTO-level graph rather than a full Java PSI or call graph.

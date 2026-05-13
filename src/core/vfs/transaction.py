@@ -218,7 +218,16 @@ class VirtualFileSystemTransaction:
             return self._files[path]
 
         if path.exists():
-            content = path.read_text(encoding="utf-8")
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                try:
+                    display_path = path.relative_to(self.project_path).as_posix()
+                except ValueError:
+                    display_path = path.as_posix()
+                raise PatchParseError(
+                    f"Only UTF-8 text files can be patched: {display_path}"
+                ) from exc
             state = VirtualFileState(
                 path=path,
                 original=content,

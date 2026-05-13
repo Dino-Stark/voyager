@@ -45,6 +45,7 @@ voyager start .
 voyager scan .
 voyager plan patch agent.patch
 voyager apply -y
+voyager status
 voyager stop
 ```
 
@@ -67,6 +68,11 @@ Patch files may:
 - delete files with `/dev/null` as the new path,
 - move files with git-style `rename from` / `rename to` metadata,
 - apply multiple ordered patches to the same virtual file.
+
+Patch transactions are UTF-8 text only. Voyager rejects binary patch metadata,
+symlink metadata, chmod/mode-only metadata, and non-UTF-8 target files. `voyager
+status` reports whether JDT LS snapshot diagnostics are active for the current
+project.
 
 ## Core Principles
 

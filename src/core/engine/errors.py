@@ -5,6 +5,7 @@ All errors are recoverable and carry sufficient context for debugging.
 """
 
 from enum import Enum
+from typing import Any
 
 
 class ErrorType(str, Enum):
@@ -41,11 +42,13 @@ class EngineError(Exception):
         message: str,
         target: str | None = None,
         file_path: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         self.error_type = error_type
         self.message = message
         self.target = target
         self.file_path = file_path
+        self.details = details or {}
         super().__init__(message)
 
     def to_dict(self) -> dict:
@@ -57,6 +60,8 @@ class EngineError(Exception):
             result["target"] = self.target
         if self.file_path:
             result["file"] = self.file_path
+        if self.details:
+            result["details"] = self.details
         return result
 
 

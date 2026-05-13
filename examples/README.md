@@ -38,8 +38,12 @@ Patch files can modify existing files, create files, delete files, and use
 git-style rename metadata. When JDT LS is available for a Maven/Gradle/Eclipse
 project, planned patches must leave the temporary snapshot free of Java error
 diagnostics; partial symbol updates that only change a field declaration but not
-its accessors or callers are rejected. Run one scenario at a time from a fresh
-reset so each expected file list stays independent.
+its accessors or callers are rejected by diagnostics or snapshot compile checks,
+and the CLI groups diagnostics by file when LSP details are available.
+Patch inputs and targets are UTF-8 text only; binary patches, symlink patches,
+chmod/mode-only patches, and non-UTF-8 target files are rejected. Run one
+scenario at a time from a fresh reset so each expected file list stays
+independent.
 
 ## E2E regression
 
@@ -49,7 +53,7 @@ Run the full example regression suite from the repository root:
 python examples/e2e_v1.py
 ```
 
-The script resets example projects, exercises ordered patch sets, complete
-field/accessor/caller patch updates, file create/modify/move/delete lifecycle
-patches, and the multi-project Server isolation flow, then stops any Servers it
-started.
+The script resets example projects, exercises incomplete patch rejection through
+LSP snapshot diagnostics, ordered patch sets, complete field/accessor/caller
+patch updates, file create/modify/move/delete lifecycle patches, and the
+multi-project Server isolation flow, then stops any Servers it started.

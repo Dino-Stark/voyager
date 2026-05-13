@@ -32,6 +32,7 @@ def main() -> None:
     """
     reset("shop-dto")
     try:
+        run_shop_dto_rejects_incomplete_patch_with_lsp_diagnostics()
         run_shop_dto_patch_set_flow()
         run_shop_dto_file_lifecycle_patch_flow()
         run_multi_project_patch_isolation_flow()
@@ -41,6 +42,45 @@ def main() -> None:
         stop_if_running(EXAMPLES_DIR / "mini-order")
 
     print("examples/e2e_v1.py: all flows passed")
+
+
+def run_shop_dto_rejects_incomplete_patch_with_lsp_diagnostics() -> None:
+    """
+    Verify snapshot diagnostics reject a partial Java symbol update before commit.
+    """
+    reset("shop-dto")
+    project = EXAMPLES_DIR / "shop-dto"
+    patch_path = project / "incomplete-field.patch"
+    patch_path.write_text(
+        """--- a/src/main/java/com/shop/OrderDTO.java
++++ b/src/main/java/com/shop/OrderDTO.java
+@@ -1,7 +1,7 @@
+ package com.shop;
+ 
+ public class OrderDTO {
+-    private String orderId;
++    private String externalOrderId;
+     private double totalPrice;
+ 
+     public String getOrderId() {
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        run_cli(project, "scan", ".")
+        result = run_cli_expect_failure(project, "plan", "patch", str(patch_path))
+        assert_contains(result.stdout, "Plan rejected")
+        assert (
+            "LSP snapshot diagnostics failed" in result.stdout
+            or "Snapshot compile check failed" in result.stdout
+        ), result.stdout
+        order_dto = read(project / "src/main/java/com/shop/OrderDTO.java")
+        assert_contains(order_dto, "private String orderId;")
+        assert_not_contains(order_dto, "private String externalOrderId;")
+    finally:
+        patch_path.unlink(missing_ok=True)
+        run_cli(project, "stop")
 
 
 def run_shop_dto_patch_set_flow() -> None:
@@ -375,6 +415,31 @@ def run_cli(project: Path, *args: str) -> CommandResult:
     if completed.returncode != 0:
         raise AssertionError(
             f"Command failed in {project}: {' '.join(cmd)}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+    return CommandResult(args=cmd, stdout=completed.stdout, stderr=completed.stderr)
+
+
+def run_cli_expect_failure(project: Path, *args: str) -> CommandResult:
+    """
+    Run the Voyager CLI and assert it exits unsuccessfully.
+    """
+    env = os.environ.copy()
+    env["PYTHONPATH"] = _pythonpath(env)
+    cmd = [sys.executable, "-m", "voyager_cmd.main", *args]
+    completed = subprocess.run(
+        cmd,
+        cwd=project,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=180,
+    )
+    if completed.returncode == 0:
+        raise AssertionError(
+            f"Command unexpectedly succeeded in {project}: {' '.join(cmd)}\n"
             f"stdout:\n{completed.stdout}\n"
             f"stderr:\n{completed.stderr}"
         )

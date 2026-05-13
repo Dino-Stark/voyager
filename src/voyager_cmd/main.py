@@ -7,6 +7,8 @@ Usage:
     voyager plan patch <patch_file> [<patch_file>...]
     voyager apply
     voyager status
+    voyager progress
+    voyager cancel
     voyager stop
 """
 
@@ -22,6 +24,7 @@ from cli.commands.apply import apply_plan
 from cli.commands.apply import _find_project_root as _find_project_root_for_status
 from cli.commands.plan import plan_operation
 from cli.commands.scan import scan_project
+from core.engine.execution_engine import validation_capability
 from core.server.client import VoyagerServerClient
 from core.server.server import run_server
 
@@ -169,11 +172,18 @@ def status(ctx: click.Context) -> None:
         server_value = f"running (pid {server_status.get('pid')})"
     except Exception:
         server_value = "stopped"
+        server_status = {}
+
+    capabilities = server_status.get("capabilities") or validation_capability(project_path).to_dict()
+    progress = server_status.get("progress") or {}
 
     if graph is None:
         console.print("[yellow]No semantic graph found.[/yellow]")
         console.print("Run [bold]voyager scan <project_path>[/bold] to build one.")
         console.print(f"Voyager server: [cyan]{server_value}[/cyan]")
+        console.print(f"JDT LS: [cyan]{_yes_no(capabilities.get('jdtls_available'))}[/cyan]")
+        console.print(f"Java build metadata: [cyan]{_yes_no(capabilities.get('java_build_metadata'))}[/cyan]")
+        console.print(f"Snapshot diagnostics: [cyan]{_yes_no(capabilities.get('snapshot_diagnostics'))}[/cyan]")
         return
 
     table = Table(title="Voyager Status")
@@ -181,6 +191,11 @@ def status(ctx: click.Context) -> None:
     table.add_column("Value", style="green")
 
     table.add_row("Server", server_value)
+    table.add_row("JDT LS", _yes_no(capabilities.get("jdtls_available")))
+    table.add_row("Java build metadata", _yes_no(capabilities.get("java_build_metadata")))
+    table.add_row("Snapshot diagnostics", _yes_no(capabilities.get("snapshot_diagnostics")))
+    if progress:
+        table.add_row("Last operation", _format_progress(progress))
     classes = [s for s in graph.symbols if s.type.value == "class"]
     fields = [s for s in graph.symbols if s.type.value == "field"]
     methods = [s for s in graph.symbols if s.type.value == "method"]
@@ -206,6 +221,51 @@ def stop(ctx: click.Context) -> None:
         console.print(f"[yellow]No running Voyager server found:[/yellow] {exc}")
         return
     console.print("[green]Voyager server stopped.[/green]")
+
+
+@cli.command()
+@click.pass_context
+def progress(ctx: click.Context) -> None:
+    """
+    Show the last known Server operation progress.
+    """
+    project_path = _find_project_root_for_status()
+    try:
+        result = VoyagerServerClient(project_path, auto_start=False).progress()
+    except Exception as exc:
+        console.print(f"[yellow]No running Voyager server found:[/yellow] {exc}")
+        return
+    console.print(f"[cyan]{_format_progress(result)}[/cyan]")
+    message = result.get("message")
+    if message:
+        console.print(str(message))
+
+
+@cli.command()
+@click.pass_context
+def cancel(ctx: click.Context) -> None:
+    """
+    Request cancellation of the current Server operation.
+    """
+    project_path = _find_project_root_for_status()
+    try:
+        result = VoyagerServerClient(project_path, auto_start=False).cancel()
+    except Exception as exc:
+        console.print(f"[yellow]No running Voyager server found:[/yellow] {exc}")
+        return
+    style = "green" if result.get("accepted") else "yellow"
+    console.print(f"[{style}]{result.get('message', 'Cancel request completed.')}[/{style}]")
+
+
+def _yes_no(value: object) -> str:
+    return "yes" if value is True else "no"
+
+
+def _format_progress(progress: dict) -> str:
+    status = progress.get("status") or "idle"
+    stage = progress.get("stage") or "idle"
+    cancel = " cancel requested" if progress.get("cancel_requested") else ""
+    return f"{stage} / {status}{cancel}"
 
 
 if __name__ == "__main__":

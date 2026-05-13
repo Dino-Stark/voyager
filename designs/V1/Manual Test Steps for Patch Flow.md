@@ -44,9 +44,62 @@ python examples/e2e_v1.py
 Expected:
 
 - The script resets example projects before each scenario.
-- It verifies ordered patch sets, complete field/accessor/caller updates, file
+- It verifies diagnostics rejection for an incomplete field-only patch, ordered
+  patch sets, complete field/accessor/caller updates, file
   create/modify/move/delete lifecycle, and multi-project Server isolation.
 - It stops any Servers it starts.
+
+---
+
+## Scenario 0: Diagnostics Reject An Incomplete Patch
+
+This scenario requires JDT LS and the `shop-dto` Maven `pom.xml`, so snapshot
+diagnostics are active.
+
+### Step 0.1: Reset
+
+```bash
+python examples/reset.py shop-dto
+cd examples/shop-dto
+```
+
+### Step 0.2: Create An Incomplete Patch
+
+```bash
+cat > incomplete-field.patch <<'PATCH'
+--- a/src/main/java/com/shop/OrderDTO.java
++++ b/src/main/java/com/shop/OrderDTO.java
+@@ -1,7 +1,7 @@
+ package com.shop;
+ 
+ public class OrderDTO {
+-    private String orderId;
++    private String externalOrderId;
+     private double totalPrice;
+ 
+     public String getOrderId() {
+PATCH
+```
+
+### Step 0.3: Plan And Expect Rejection
+
+```bash
+voyager scan .
+voyager plan patch incomplete-field.patch
+```
+
+Expected:
+
+- The command exits unsuccessfully.
+- CLI output includes `Plan rejected` plus either grouped `LSP snapshot
+  diagnostics failed` output or a `Snapshot compile check failed` message.
+- `OrderDTO.java` still contains `private String orderId;`.
+
+Clean up:
+
+```bash
+voyager stop
+```
 
 ---
 

@@ -1,10 +1,12 @@
 """Execution engine for Voyager's patch-first operations."""
 
+import asyncio
 import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from core.diff.patch_engine import PatchParseError, parse_unified_patch
 from core.engine.errors import EngineError, ErrorType
@@ -50,6 +52,27 @@ class FilePatch:
     destination: Path | None = None
     exists: bool = True
     delete: bool = False
+
+
+@dataclass(frozen=True)
+class ValidationCapability:
+    """
+    Runtime validation capability for a project root.
+    """
+
+    jdtls_available: bool
+    java_build_metadata: bool
+
+    @property
+    def snapshot_diagnostics(self) -> bool:
+        return self.jdtls_available and self.java_build_metadata
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "jdtls_available": self.jdtls_available,
+            "java_build_metadata": self.java_build_metadata,
+            "snapshot_diagnostics": self.snapshot_diagnostics,
+        }
 
 
 class ExecutionEngine:
@@ -297,7 +320,7 @@ class ExecutionEngine:
         Validate the virtual transaction using a temporary snapshot under .voyager.
         """
         java_config = get_language_config(Language.JAVA)
-        if java_config.find_server_command() is None or not _has_java_build_metadata(self.project_path):
+        if not validation_capability(self.project_path).snapshot_diagnostics:
             return
 
         snapshot_path: Path | None = None
@@ -322,6 +345,7 @@ class ExecutionEngine:
                     snapshot_client,
                     operation,
                 )
+                await self._reject_snapshot_compile_errors_async(snapshot_path, operation)
             GraphBuilder(snapshot_path).build(classes)
         except Exception as exc:
             if isinstance(exc, EngineError):
@@ -348,7 +372,7 @@ class ExecutionEngine:
         java_files = self._snapshot_java_files(snapshot_path)
         diagnostics_by_file = await snapshot_client.wait_for_diagnostics(java_files)
         errors = [
-            _format_lsp_diagnostic(path, diagnostic, snapshot_path)
+            _lsp_diagnostic_to_detail(path, diagnostic, snapshot_path)
             for path, diagnostics in diagnostics_by_file.items()
             for diagnostic in diagnostics
             if _is_error_diagnostic(diagnostic)
@@ -356,7 +380,8 @@ class ExecutionEngine:
         if not errors:
             return
 
-        preview = "; ".join(errors[:3])
+        formatted = [_format_lsp_diagnostic_detail(error) for error in errors]
+        preview = "; ".join(formatted[:3])
         if len(errors) > 3:
             preview = f"{preview}; ... ({len(errors)} errors total)"
         raise EngineError(
@@ -364,6 +389,7 @@ class ExecutionEngine:
             f"LSP snapshot diagnostics failed: {preview}",
             target=operation.description,
             file_path=str(snapshot_path),
+            details={"diagnostics": errors, "diagnostic_count": len(errors)},
         )
 
     def _snapshot_java_files(
@@ -380,6 +406,47 @@ class ExecutionEngine:
             path
             for path in snapshot_path.rglob("*.java")
             if not _is_ignored_snapshot_path(path, snapshot_path)
+        )
+
+    async def _reject_snapshot_compile_errors_async(
+        self,
+        snapshot_path: Path,
+        operation: PatchOperation,
+    ) -> None:
+        """
+        Run a lightweight build command for snapshot compile/type errors.
+
+        JDT LS diagnostics are asynchronous and may be quiet in some local
+        setups. When a standard Java build wrapper/tool is present, use it as a
+        deterministic backstop before allowing a patch to commit.
+        """
+        command = _snapshot_compile_command(snapshot_path)
+        if command is None:
+            return
+
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(snapshot_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode == 0:
+            return
+
+        output = _decode_compile_output(stdout, stderr)
+        raise EngineError(
+            ErrorType.VALIDATION_FAILED,
+            f"Snapshot compile check failed: {_compile_output_preview(output)}",
+            target=operation.description,
+            file_path=str(snapshot_path),
+            details={
+                "compile_check": {
+                    "command": command,
+                    "returncode": process.returncode,
+                    "output": output,
+                }
+            },
         )
 
     def _assert_inside_project(self, path: Path) -> None:
@@ -511,6 +578,13 @@ def _format_lsp_diagnostic(path: Path, diagnostic: dict[str, Any], root: Path) -
     """
     Format one LSP diagnostic for a concise validation error.
     """
+    return _format_lsp_diagnostic_detail(_lsp_diagnostic_to_detail(path, diagnostic, root))
+
+
+def _lsp_diagnostic_to_detail(path: Path, diagnostic: dict[str, Any], root: Path) -> dict[str, Any]:
+    """
+    Convert one LSP diagnostic into a stable JSON-compatible shape.
+    """
     rel_path = path.resolve()
     try:
         display_path = rel_path.relative_to(root.resolve()).as_posix()
@@ -520,7 +594,27 @@ def _format_lsp_diagnostic(path: Path, diagnostic: dict[str, Any], root: Path) -
     line = int(start.get("line", 0)) + 1
     character = int(start.get("character", 0)) + 1
     message = str(diagnostic.get("message", "Java diagnostic error")).strip()
-    return f"{display_path}:{line}:{character}: {message}"
+    return {
+        "file": display_path,
+        "line": line,
+        "column": character,
+        "message": message,
+        "severity": diagnostic.get("severity", 1),
+        "source": diagnostic.get("source"),
+        "code": diagnostic.get("code"),
+    }
+
+
+def _format_lsp_diagnostic_detail(detail: dict[str, Any]) -> str:
+    """
+    Format a structured diagnostic detail for human-facing output.
+    """
+    return (
+        f"{detail.get('file', '<unknown>')}:"
+        f"{detail.get('line', 0)}:"
+        f"{detail.get('column', 0)}: "
+        f"{detail.get('message', 'Java diagnostic error')}"
+    )
 
 
 def _is_ignored_snapshot_path(path: Path, snapshot_root: Path) -> bool:
@@ -551,3 +645,92 @@ def _has_java_build_metadata(project_path: Path) -> bool:
         ".project",
     }
     return any((project_path / marker).exists() for marker in markers)
+
+
+def _snapshot_compile_command(project_path: Path) -> list[str] | None:
+    """
+    Return the best available compile command for a Java snapshot.
+    """
+    if (project_path / "mvnw.cmd").exists():
+        return [str(project_path / "mvnw.cmd"), "-q", "-DskipTests", "test-compile"]
+    if (project_path / "mvnw").exists():
+        return [str(project_path / "mvnw"), "-q", "-DskipTests", "test-compile"]
+    if (project_path / "pom.xml").exists():
+        mvn = shutil.which("mvn")
+        if mvn is not None:
+            return [mvn, "-q", "-DskipTests", "test-compile"]
+        javac = shutil.which("javac")
+        if javac is not None and _maven_project_has_no_external_dependencies(project_path):
+            java_files = _snapshot_compile_java_files(project_path)
+            if java_files:
+                output_dir = project_path / ".voyager" / "cache" / "javac-classes"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                return [javac, "-d", str(output_dir), *[str(path) for path in java_files]]
+    if (project_path / "gradlew.bat").exists():
+        return [str(project_path / "gradlew.bat"), "compileJava", "-q"]
+    if (project_path / "gradlew").exists():
+        return [str(project_path / "gradlew"), "compileJava", "-q"]
+    if (project_path / "build.gradle").exists() or (project_path / "build.gradle.kts").exists():
+        gradle = shutil.which("gradle")
+        if gradle is not None:
+            return [gradle, "compileJava", "-q"]
+    return None
+
+
+def _snapshot_compile_java_files(project_path: Path) -> list[Path]:
+    source_root = project_path / "src" / "main" / "java"
+    if not source_root.exists():
+        source_root = project_path
+    return sorted(
+        path
+        for path in source_root.rglob("*.java")
+        if not _is_ignored_snapshot_path(path, project_path)
+    )
+
+
+def _maven_project_has_no_external_dependencies(project_path: Path) -> bool:
+    """
+    Return true when a pom.xml is simple enough for a direct javac fallback.
+    """
+    pom_path = project_path / "pom.xml"
+    try:
+        root = ElementTree.parse(pom_path).getroot()
+    except Exception:
+        return False
+    for element in root.iter():
+        if _xml_local_name(element.tag) == "dependency":
+            return False
+    return True
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1] if "}" in tag else tag
+
+
+def _decode_compile_output(stdout: bytes, stderr: bytes) -> str:
+    raw = stdout + b"\n" + stderr
+    for encoding in ("utf-8", "gbk", "mbcs", "cp1252"):
+        try:
+            return raw.decode(encoding).strip()
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", errors="backslashreplace").strip()
+
+
+def _compile_output_preview(output: str, limit: int = 600) -> str:
+    text = " ".join(line.strip() for line in output.splitlines() if line.strip())
+    if not text:
+        return "build command failed without output"
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def validation_capability(project_path: Path) -> ValidationCapability:
+    """
+    Return the snapshot validation capability for a project root.
+    """
+    return ValidationCapability(
+        jdtls_available=get_language_config(Language.JAVA).find_server_command() is not None,
+        java_build_metadata=_has_java_build_metadata(project_path),
+    )

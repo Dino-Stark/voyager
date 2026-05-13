@@ -13,7 +13,18 @@ from pathlib import Path
 from typing import Any
 
 from core.operation.models import Operation
-from core.server.protocol import SERVER_LOG_FILE, VoyagerServerInfo
+from core.server.protocol import (
+    METHOD_OPERATION_APPLY,
+    METHOD_OPERATION_CANCEL,
+    METHOD_OPERATION_PLAN,
+    METHOD_PROJECT_SCAN,
+    METHOD_SERVER_PING,
+    METHOD_SERVER_PROGRESS,
+    METHOD_SERVER_SHUTDOWN,
+    METHOD_SERVER_STATUS,
+    SERVER_LOG_FILE,
+    VoyagerServerInfo,
+)
 from storage.manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -40,7 +51,7 @@ class VoyagerServerClient:
         self._server_info: VoyagerServerInfo | None = None
 
     def scan(self) -> dict[str, Any]:
-        return self._request("project/scan", {})
+        return self._request(METHOD_PROJECT_SCAN, {})
 
     def start(self) -> dict[str, Any]:
         """
@@ -50,19 +61,25 @@ class VoyagerServerClient:
         It only ensures the background server is alive and returns its status.
         """
         server_info = self._ensure_server(allow_start=True)
-        return self._request_with_server(server_info, "server/status", {})
+        return self._request_with_server(server_info, METHOD_SERVER_STATUS, {})
 
     def plan(self, operation: Operation) -> dict[str, Any]:
-        return self._request("operation/plan", {"operation": operation.model_dump(mode="json")})
+        return self._request(METHOD_OPERATION_PLAN, {"operation": operation.model_dump(mode="json")})
 
     def apply(self, operation: Operation) -> dict[str, Any]:
-        return self._request("operation/apply", {"operation": operation.model_dump(mode="json")})
+        return self._request(METHOD_OPERATION_APPLY, {"operation": operation.model_dump(mode="json")})
 
     def status(self) -> dict[str, Any]:
-        return self._request("server/status", {})
+        return self._request(METHOD_SERVER_STATUS, {})
 
     def ping(self) -> dict[str, Any]:
-        return self._request("server/ping", {})
+        return self._request(METHOD_SERVER_PING, {})
+
+    def progress(self) -> dict[str, Any]:
+        return self._request(METHOD_SERVER_PROGRESS, {})
+
+    def cancel(self) -> dict[str, Any]:
+        return self._request(METHOD_OPERATION_CANCEL, {})
 
     def shutdown(self) -> dict[str, Any]:
         server_info = self._load_server_info()
@@ -81,7 +98,7 @@ class VoyagerServerClient:
             raise RuntimeError("No running Voyager server for this project")
 
         try:
-            return self._request_with_server(server_info, "server/shutdown", {})
+            return self._request_with_server(server_info, METHOD_SERVER_SHUTDOWN, {})
         finally:
             self.storage.clear_server_info()
 
@@ -144,7 +161,7 @@ class VoyagerServerClient:
 
     def _ping_server(self, server_info: VoyagerServerInfo) -> bool:
         try:
-            response = self._request_with_server(server_info, "server/ping", {}, timeout=2.0)
+            response = self._request_with_server(server_info, METHOD_SERVER_PING, {}, timeout=2.0)
             return response.get("ok") is True
         except Exception:
             return False

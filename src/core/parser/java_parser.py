@@ -196,8 +196,9 @@ def parse_java_project_static(project_path: Path) -> list[JavaClass]:
     """Parse all Java files using the built-in conservative parser."""
 
     classes: list[JavaClass] = []
+    project_path = project_path.resolve()
     for file_path in sorted(project_path.rglob("*.java")):
-        if _is_ignored_path(file_path):
+        if _is_ignored_path(file_path, project_path):
             continue
         try:
             classes.extend(parse_java_file(file_path))
@@ -229,17 +230,17 @@ def parse_java_project_static_with_overrides(
     java_files = {
         file_path.resolve()
         for file_path in project_path.rglob("*.java")
-        if not _is_ignored_path(file_path)
+        if not _is_ignored_path(file_path, project_path)
     }
     java_files.update(
         path
         for path in normalized
-        if path.suffix == ".java" and not _is_ignored_path(path)
+        if path.suffix == ".java" and not _is_ignored_path(path, project_path)
     )
     java_files.difference_update(deleted)
 
     for file_path in sorted(java_files):
-        if _is_ignored_path(file_path):
+        if _is_ignored_path(file_path, project_path):
             continue
         try:
             if file_path in normalized:
@@ -306,7 +307,7 @@ async def _analyze_with_lsp(
 
 async def _analyze_with_lsp_client(project_path: Path, client: LspClient) -> list[JavaClass]:
     java_files = [
-        path for path in sorted(project_path.rglob("*.java")) if not _is_ignored_path(path)
+        path for path in sorted(project_path.rglob("*.java")) if not _is_ignored_path(path, project_path)
     ]
     classes: list[JavaClass] = []
     for file_path in java_files:
@@ -532,8 +533,14 @@ def _is_dto(cls: JavaClass) -> bool:
     return not any(method.name == "main" or "static" in method.modifiers for method in cls.methods)
 
 
-def _is_ignored_path(path: Path) -> bool:
+def _is_ignored_path(path: Path, project_root: Path | None = None) -> bool:
     ignored_parts = {".git", ".voyager", "target", "build", ".gradle", ".idea"}
+    if project_root is not None:
+        try:
+            relative_parts = path.resolve().relative_to(project_root.resolve()).parts
+            return any(part in ignored_parts for part in relative_parts)
+        except ValueError:
+            pass
     return any(part in ignored_parts for part in path.parts)
 
 

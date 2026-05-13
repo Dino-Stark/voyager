@@ -82,6 +82,7 @@ def parse_unified_patch(patch_text: str) -> list[ParsedPatchFile]:
     Parse a unified diff into per-file patch sections.
     """
     lines = patch_text.splitlines(keepends=True)
+    _reject_unsupported_patch_metadata(lines)
     files: list[ParsedPatchFile] = []
     index = 0
 
@@ -238,15 +239,45 @@ def _parse_git_metadata_file(
 
     old_path: str | None = None
     new_path: str | None = None
+    has_chmod_metadata = False
     for line in section:
         if line.startswith("rename from "):
             old_path = normalize_patch_path(line.removeprefix("rename from ").strip())
         elif line.startswith("rename to "):
             new_path = normalize_patch_path(line.removeprefix("rename to ").strip())
+        elif line.startswith(("old mode ", "new mode ")):
+            has_chmod_metadata = True
+
+    if has_chmod_metadata:
+        raise PatchParseError("Mode-only or chmod patches are not supported")
 
     if old_path is None or new_path is None:
         return None, index
     return ParsedPatchFile(old_path=old_path, new_path=new_path, move_only=True), index
+
+
+def _reject_unsupported_patch_metadata(lines: list[str]) -> None:
+    """
+    Reject git diff features that V1's text patch engine does not model.
+    """
+    for line in lines:
+        if line.startswith(("Binary files ", "GIT binary patch")):
+            raise PatchParseError("Binary patches are not supported")
+        if line.startswith(("old mode ", "new mode ")):
+            raise PatchParseError("Mode-only or chmod patches are not supported")
+        if _is_symlink_mode_line(line):
+            raise PatchParseError("Symlink patches are not supported")
+
+
+def _is_symlink_mode_line(line: str) -> bool:
+    return line.startswith(
+        (
+            "new file mode 120000",
+            "deleted file mode 120000",
+            "old mode 120000",
+            "new mode 120000",
+        )
+    )
 
 
 def _parse_file_header(line: str, prefix: str) -> str | None:

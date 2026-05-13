@@ -196,9 +196,29 @@ The internal edit model is a task-level virtual filesystem transaction:
 - Git rename metadata can move a file, with or without hunks.
 - Multiple patches for the same file are applied in order to the current virtual content.
 - Non-Java files can participate in the transaction, but only Java files affect the graph.
+- V1 patches are UTF-8 text patches. Binary patches, symlink patches, chmod/mode-only
+  patches, and non-UTF-8 target files are rejected explicitly.
 
 The final transaction is collapsed into `FilePatch` objects only after the whole
 patch set has applied cleanly.
+
+---
+
+## Semantic Graph Scope
+
+The V1 graph is a conservative Java/DTO-level graph, not a full Java PSI or call
+graph. It records:
+
+- classes, fields, and methods discovered by JDT LS document symbols or the
+  static parser fallback;
+- field type, method return type, and method parameter type references;
+- simple typed field accesses and method calls where the receiver type can be
+  resolved locally.
+
+Method symbols include parameter types in their IDs, for example
+`com.shop.OrderDTO.setOrderId(String)`. Name-only method lookup intentionally
+remains ambiguous for overloaded methods, and method-call edges are only added
+when a target method name resolves to exactly one method in the receiver class.
 
 ---
 
@@ -214,6 +234,8 @@ Patch/VFS validation checks:
 - every path is project-local,
 - every hunk context matches exactly,
 - create/delete/move state transitions are valid,
+- unsupported binary, symlink, chmod/mode-only, and non-UTF-8 text targets are
+  rejected,
 - the patch set produces at least one final file change.
 - when JDT LS is available and the project has Java build metadata, the
   materialized snapshot must not publish error-level diagnostics for Java files.
@@ -237,7 +259,10 @@ Failure handling is conservative:
 - post-validation failure: discard in-memory patches, touch no files;
 - commit failure: roll back files already written from in-memory backups.
 
-The graph on disk is updated only after successful commit.
+The graph on disk is updated only after successful commit. LSP diagnostic
+failures are returned as structured error details containing file, line, column,
+message, severity, source, and code so CLI and future clients can present grouped
+diagnostics without parsing a human-readable string.
 
 ---
 
@@ -253,6 +278,8 @@ transaction.
    - Normalize paths to project-relative paths.
    - Reject invalid hunk headers, malformed file sections, and paths that escape
      the project root.
+   - Reject unsupported git metadata for binary patches, symlinks, chmod/mode-only
+     changes, and non-UTF-8 text targets.
 
 2. Apply To VFS
    - Apply multiple patches for the same file in task order.
@@ -315,6 +342,10 @@ graph from the patched state. For projects with Java build metadata such as
 short-lived snapshot-scoped LSP client with diagnostics enabled and rejects any
 error-level diagnostics before source files are committed.
 
+When a standard Maven/Gradle compile command is available, snapshot validation
+also runs a compile check as a deterministic backstop for diagnostics that may
+arrive late or stay quiet in a local LSP setup.
+
 The long-lived Server-owned LSP client remains rooted at the real project and is
 used for scan and graph loading. Snapshot validation intentionally uses a
 separate client because diagnostics must describe the virtual final state under
@@ -324,3 +355,7 @@ If JDT LS is unavailable, or the project has no Java build metadata, V1 falls
 back to exact patch/VFS validation and static graph rebuild. This avoids false
 package-layout diagnostics for lightweight fixtures while still keeping the
 stronger diagnostic gate for normal Maven/Gradle/Eclipse projects.
+
+`voyager status` reports this capability explicitly through three values: JDT LS
+availability, Java build metadata detection, and whether snapshot diagnostics are
+active for the current project.

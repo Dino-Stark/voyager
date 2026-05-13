@@ -2,18 +2,22 @@ import sys
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from cli.commands.errors import print_operation_errors
 from cli.commands.plan import _build_operation
-from core.diff.patch_engine import apply_parsed_patch, parse_unified_patch
+from core.diff.patch_engine import PatchParseError, apply_parsed_patch, parse_unified_patch
 from core.engine.errors import EngineError
 from core.engine.execution_engine import (
     ExecutionEngine,
     _format_lsp_diagnostic,
     _has_java_build_metadata,
+    _snapshot_compile_command,
     _is_error_diagnostic,
     _normalize_newlines,
+    validation_capability,
     apply_lsp_edits,
 )
 from core.graph.builder import GraphBuilder
@@ -123,6 +127,39 @@ public class UserService {
     assert {ref.extra["receiver"] for ref in method_refs} == {"user", "this.current"}
 
 
+def test_graph_method_ids_include_signatures_for_overloads(tmp_path: Path) -> None:
+    write(
+        tmp_path / "src/main/java/com/acme/UserDTO.java",
+        """package com.acme;
+
+public class UserDTO {
+    public String label(String name) {
+        return name;
+    }
+
+    public String label(int code) {
+        return String.valueOf(code);
+    }
+
+    public String describe() {
+        return label("x");
+    }
+}
+""",
+    )
+
+    graph = GraphBuilder(tmp_path).build(parse_java_project_static(tmp_path))
+    methods = graph.find_methods("UserDTO", "label")
+
+    assert {method.id for method in methods} == {
+        "com.acme.UserDTO.label(String)",
+        "com.acme.UserDTO.label(int)",
+    }
+    assert {method.extra["signature"] for method in methods} == {"label(String)", "label(int)"}
+    assert graph.resolve_method("UserDTO", "label") is None
+    assert graph.resolve_method("UserDTO", "describe").id == "com.acme.UserDTO.describe()"
+
+
 def test_cli_rejects_non_patch_operations() -> None:
     with pytest.raises(ValueError, match="patch-only"):
         _build_operation("custom_operation", "com.shop.UserDTO.userName", "customerName")
@@ -225,6 +262,34 @@ rename to src/main/java/com/acme/NewDTO.java
     assert patch_files[1].move_only
 
 
+def test_patch_parser_rejects_binary_symlink_and_mode_only_patches() -> None:
+    with pytest.raises(PatchParseError, match="Binary patches are not supported"):
+        parse_unified_patch(
+            """diff --git a/logo.png b/logo.png
+Binary files a/logo.png and b/logo.png differ
+"""
+        )
+
+    with pytest.raises(PatchParseError, match="Symlink patches are not supported"):
+        parse_unified_patch(
+            """diff --git a/link b/link
+new file mode 120000
+--- /dev/null
++++ b/link
+@@ -0,0 +1 @@
++target
+"""
+        )
+
+    with pytest.raises(PatchParseError, match="Mode-only or chmod patches are not supported"):
+        parse_unified_patch(
+            """diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+"""
+        )
+
+
 def test_apply_lsp_edits_uses_reverse_order() -> None:
     content = "private String userId;\nreturn userId;\n"
     edits = [
@@ -265,10 +330,29 @@ def test_lsp_diagnostic_helpers_format_errors(tmp_path: Path) -> None:
 
 def test_java_build_metadata_detection(tmp_path: Path) -> None:
     assert not _has_java_build_metadata(tmp_path)
+    assert validation_capability(tmp_path).java_build_metadata is False
 
     (tmp_path / "pom.xml").write_text("<project />", encoding="utf-8")
 
     assert _has_java_build_metadata(tmp_path)
+    assert validation_capability(tmp_path).java_build_metadata is True
+
+
+def test_static_parser_does_not_ignore_snapshot_root_inside_voyager_cache(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / ".voyager/cache/vfs-snapshots/patch-123"
+    write(
+        snapshot_root / "src/main/java/com/acme/SnapshotDTO.java",
+        """package com.acme;
+
+public class SnapshotDTO {
+    private String id;
+}
+""",
+    )
+
+    classes = parse_java_project_static(snapshot_root)
+
+    assert [cls.fqn for cls in classes] == ["com.acme.SnapshotDTO"]
 
 
 def test_lsp_client_diagnostics_configuration_is_opt_in(tmp_path: Path) -> None:
@@ -462,6 +546,148 @@ def test_snapshot_diagnostics_reject_error_without_writing(java_project: Path) -
     assert "private String userId;" in source.read_text(encoding="utf-8")
 
 
+def test_snapshot_diagnostics_error_contains_structured_details(java_project: Path) -> None:
+    engine = ExecutionEngine(java_project)
+    operation = PatchOperation(patch="--- /dev/null\n+++ b/Noop.java\n@@ -0,0 +1,1 @@\n+class Noop {}\n")
+    snapshot = java_project / ".voyager/cache/vfs-snapshots/patch-test"
+    snapshot_file = snapshot / "src/main/java/com/acme/OrderDTO.java"
+    write(snapshot_file, "package com.acme;\nclass OrderDTO {}\n")
+
+    class FakeSnapshotClient:
+        async def wait_for_diagnostics(self, file_paths):
+            return {
+                snapshot_file: [
+                    {
+                        "severity": 1,
+                        "message": "Cannot resolve symbol",
+                        "range": {"start": {"line": 1, "character": 6}},
+                        "source": "Java",
+                    }
+                ]
+            }
+
+    with pytest.raises(EngineError) as captured:
+        run_async(
+            engine._reject_snapshot_diagnostics_async(
+                snapshot,
+                FakeSnapshotClient(),
+                operation,
+            )
+        )
+
+    error = captured.value.to_dict()
+    diagnostics = error["details"]["diagnostics"]
+    assert diagnostics == [
+        {
+            "file": "src/main/java/com/acme/OrderDTO.java",
+            "line": 2,
+            "column": 7,
+            "message": "Cannot resolve symbol",
+            "severity": 1,
+            "source": "Java",
+            "code": None,
+        }
+    ]
+
+
+def test_snapshot_compile_check_rejects_build_errors(
+    monkeypatch: pytest.MonkeyPatch, java_project: Path
+) -> None:
+    engine = ExecutionEngine(java_project)
+    operation = PatchOperation(patch="--- /dev/null\n+++ b/Noop.java\n@@ -0,0 +1,1 @@\n+class Noop {}\n")
+    snapshot = java_project / ".voyager/cache/vfs-snapshots/compile-test"
+    snapshot.mkdir(parents=True)
+    (snapshot / "pom.xml").write_text("<project />", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "core.engine.execution_engine._snapshot_compile_command",
+        lambda path: ["fake-mvn", "test-compile"],
+    )
+
+    class FakeProcess:
+        returncode = 1
+
+        async def communicate(self):
+            return b"cannot find symbol", b""
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        assert args == ("fake-mvn", "test-compile")
+        assert kwargs["cwd"] == str(snapshot)
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "core.engine.execution_engine.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+
+    with pytest.raises(EngineError, match="Snapshot compile check failed") as captured:
+        run_async(engine._reject_snapshot_compile_errors_async(snapshot, operation))
+
+    error = captured.value.to_dict()
+    assert error["details"]["compile_check"]["command"] == ["fake-mvn", "test-compile"]
+    assert error["details"]["compile_check"]["returncode"] == 1
+    assert "cannot find symbol" in error["details"]["compile_check"]["output"]
+
+
+def test_snapshot_compile_command_uses_javac_for_simple_maven_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    write(
+        tmp_path / "pom.xml",
+        """<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.acme</groupId>
+  <artifactId>demo</artifactId>
+  <version>1</version>
+</project>
+""",
+    )
+    write(
+        tmp_path / "src/main/java/com/acme/UserDTO.java",
+        "package com.acme;\npublic class UserDTO {}\n",
+    )
+    monkeypatch.setattr("core.engine.execution_engine.shutil.which", lambda name: None)
+    monkeypatch.setattr(
+        "core.engine.execution_engine.shutil.which",
+        lambda name: "javac" if name == "javac" else None,
+    )
+
+    command = _snapshot_compile_command(tmp_path)
+
+    assert command is not None
+    assert command[:3] == ["javac", "-d", str(tmp_path / ".voyager/cache/javac-classes")]
+    assert str(tmp_path / "src/main/java/com/acme/UserDTO.java") in command
+
+
+def test_cli_error_renderer_groups_structured_diagnostics() -> None:
+    console = Console(record=True, color_system=None, width=120)
+    print_operation_errors(
+        console,
+        "Plan rejected.",
+        [
+            {
+                "type": "validation_failed",
+                "message": "LSP snapshot diagnostics failed",
+                "details": {
+                    "diagnostics": [
+                        {
+                            "file": "src/main/java/com/acme/OrderDTO.java",
+                            "line": 8,
+                            "column": 16,
+                            "message": "orderId cannot be resolved",
+                        }
+                    ]
+                },
+            }
+        ],
+    )
+
+    output = console.export_text()
+    assert "LSP snapshot diagnostics failed" in output
+    assert "src/main/java/com/acme/OrderDTO.java" in output
+    assert "8:16 orderId cannot be resolved" in output
+
+
 def test_engine_ensure_graph_reuses_project_lsp_client(
     monkeypatch: pytest.MonkeyPatch, java_project: Path
 ) -> None:
@@ -630,3 +856,20 @@ rename to src/main/java/com/acme/MovedOnlyDTO.java
     assert not old_file.exists()
     assert new_file.exists()
     assert "class MoveOnlyDTO" in new_file.read_text(encoding="utf-8")
+
+
+def test_patch_operation_rejects_non_utf8_target_file(java_project: Path) -> None:
+    binary_file = java_project / "asset.bin"
+    binary_file.write_bytes(b"\xff\xfe\x00")
+    engine = ExecutionEngine(java_project)
+    patch = """--- a/asset.bin
++++ b/asset.bin
+@@ -1,1 +1,1 @@
+-old
++new
+"""
+
+    result = engine.plan(PatchOperation(patch=patch, description="binary target"))
+
+    assert not result.is_valid
+    assert result.violations[0]["message"] == "Only UTF-8 text files can be patched: asset.bin"

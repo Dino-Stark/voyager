@@ -101,6 +101,12 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     assert client.ping()["ok"] is True
     assert client.scan()["symbols_count"] == 1
     assert server.session.scan_calls == 1
+    status = client.status()
+    assert status["capabilities"]["snapshot_diagnostics"] is False
+    assert status["progress"]["stage"] == "scan"
+    assert status["progress"]["status"] == "succeeded"
+    assert client.progress()["status"] == "succeeded"
+    assert client.cancel()["accepted"] is False
 
     operation = PatchOperation(
         patch="""--- a/UserDTO.java
@@ -112,6 +118,7 @@ def test_server_client_roundtrip_without_lsp(monkeypatch: pytest.MonkeyPatch, tm
     )
     assert client.plan(operation)["affected_files"] == ["UserDTO.java"]
     assert client.apply(operation)["modified_files"] == ["UserDTO.java"]
+    assert client.progress()["stage"] == "apply"
     assert client.shutdown()["ok"] is True
 
     thread.join(timeout=5)

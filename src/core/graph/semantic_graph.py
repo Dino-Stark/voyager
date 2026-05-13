@@ -159,8 +159,9 @@ class SemanticGraph(BaseModel):
         """
         Resolve a method by class FQN/simple name and method name.
 
-        V1 does not persist method signatures, so overloaded methods are
-        ambiguous and intentionally do not resolve.
+        V1 method IDs include parameter types, so overloaded methods remain
+        distinct. Name-only resolution is still intentionally ambiguous when a
+        class has multiple overloads with the same simple name.
         """
         matches = self.find_methods(class_name, method_name)
         return matches[0] if len(matches) == 1 else None

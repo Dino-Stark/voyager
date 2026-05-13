@@ -19,6 +19,10 @@ JDT LS is not required for every V1 behavior:
 - snapshot validation falls back to the static parser if JDT LS is unavailable
   or the project has no Java build metadata.
 
+`voyager status` reports all three capability facts for the current project:
+whether JDT LS is discoverable, whether Java build metadata is present, and
+whether snapshot diagnostics are active.
+
 ---
 
 ## Installation
@@ -148,6 +152,15 @@ Patch snapshot validation uses temporary real project directories under
 validation uses a separate short-lived `LspClient` rooted at the temporary
 snapshot with diagnostics enabled; this keeps snapshot diagnostics isolated from
 the long-lived project Server client.
+
+When snapshot diagnostics report errors, Voyager rejects the plan/apply result
+before writing source files. The engine returns structured diagnostics with
+file, line, column, message, severity, source, and code, and the CLI groups that
+output by file.
+
+For Maven/Gradle projects where a compile command is available, snapshot
+validation also runs a compile check as a backstop for diagnostics that arrive
+late or remain quiet in a local LSP setup.
 
 ---
 

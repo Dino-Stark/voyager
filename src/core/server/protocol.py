@@ -16,6 +16,15 @@ DEFAULT_SERVER_HOST = "127.0.0.1"
 SERVER_STATE_FILE = "server.json"
 SERVER_LOG_FILE = "server.log"
 
+METHOD_SERVER_PING = "server/ping"
+METHOD_SERVER_STATUS = "server/status"
+METHOD_SERVER_PROGRESS = "server/progress"
+METHOD_SERVER_SHUTDOWN = "server/shutdown"
+METHOD_PROJECT_SCAN = "project/scan"
+METHOD_OPERATION_PLAN = "operation/plan"
+METHOD_OPERATION_APPLY = "operation/apply"
+METHOD_OPERATION_CANCEL = "operation/cancel"
+
 
 @dataclass(frozen=True)
 class VoyagerServerInfo:

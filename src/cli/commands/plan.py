@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from cli.commands.errors import print_operation_errors
 from core.operation.models import (
     Operation,
     PatchOperation,
@@ -62,12 +63,7 @@ def plan_operation(
 
         return result
     else:
-        console.print("[red]Plan rejected. Violations:[/red]")
-        for v in result.violations:
-            action = v.get("action", "error")
-            msg = v.get("message", str(v))
-            style = "red" if action == "error" else "yellow"
-            console.print(f"  [{style}][{action}][/{style}] {msg}")
+        print_operation_errors(console, "[red]Plan rejected. Violations:[/red]", result.violations)
         return result
 
 

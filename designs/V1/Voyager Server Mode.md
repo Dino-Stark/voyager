@@ -62,6 +62,19 @@ Status:
 voyager status
 ```
 
+Progress and cancellation requests:
+
+```bash
+voyager progress
+voyager cancel
+```
+
+`progress` reports the last known `scan`, `plan`, or `apply` stage and status.
+`cancel` records a cancellation request for a currently running operation. The
+current V1 engine does not yet have cooperative cancellation checkpoints inside
+JDT LS or patch validation, so cancellation is a protocol and observability hook,
+not a guaranteed interrupt.
+
 ---
 
 ## Core Code Structure
@@ -77,7 +90,7 @@ src/core/session/
 `-- daemon.py           # legacy compatibility aliases
 
 src/voyager_cmd/
-|-- main.py         # CLI: start/serve/scan/plan/apply/status/stop
+|-- main.py         # CLI: start/serve/scan/plan/apply/status/progress/cancel/stop
 |-- server.py       # python -m voyager_cmd.server entrypoint
 `-- daemon.py       # legacy compatibility entrypoint
 ```
@@ -171,11 +184,28 @@ Current methods:
 | Method | Description |
 | --- | --- |
 | `server/ping` | Health check; does not take the ProjectSession lock |
-| `server/status` | Return Server pid and project path |
+| `server/status` | Return Server pid, project path, validation capability, and last progress |
+| `server/progress` | Return the last known operation progress snapshot |
 | `project/scan` | Parse project and rebuild semantic graph |
 | `operation/plan` | Validate patch operation and compute affected files |
 | `operation/apply` | Apply patch operation with validation and atomic commit |
+| `operation/cancel` | Record a cancellation request for the current operation |
 | `server/shutdown` | Stop the Server and its JDT LS process |
+
+`server/status` exposes validation capability as:
+
+```json
+{
+  "capabilities": {
+    "jdtls_available": true,
+    "java_build_metadata": true,
+    "snapshot_diagnostics": true
+  }
+}
+```
+
+The same response includes a `progress` object with `stage`, `status`,
+`operation_id`, timestamps, and `cancel_requested`.
 
 ---
 
@@ -226,8 +256,11 @@ serialized with a request lock:
 - `operation/apply`
 - `server/shutdown`
 
-`server/ping` and `server/status` do not take this lock, so health checks do not
-block behind long scan/apply work.
+`server/ping`, `server/status`, `server/progress`, and `operation/cancel` do not
+take this lock, so health checks, progress reads, and cancel requests do not
+block behind long scan/apply work. Because V1 has not added cooperative
+cancellation checkpoints inside the engine, a cancel request is currently
+observable state for clients rather than an immediate stop guarantee.
 
 ---
 
@@ -301,6 +334,8 @@ python examples/e2e_v1.py
 
 Expected:
 
+- the diagnostics rejection scenario rejects an incomplete field-only patch
+  before commit when JDT LS snapshot diagnostics are active,
 - patch set flow passes,
 - file create/modify/move/delete lifecycle flow passes,
 - multi-project Server isolation flow passes,
@@ -310,8 +345,8 @@ Expected:
 
 ## Next Directions
 
-- Add progress notifications for long scan/index operations.
-- Add cancel requests for long-running work.
+- Add streaming progress notifications instead of only polling `server/progress`.
+- Add cooperative cancellation checkpoints inside scan, snapshot validation, and apply.
 - Expose a stable JSON-RPC schema for IDE/Agent integrations.
 - Expand diagnostic coverage for lightweight source-only projects without Java build metadata.
 - Keep the boundary clear: Server executes patch transactions; CLI, IDE, and Agent are clients.
