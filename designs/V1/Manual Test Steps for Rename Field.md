@@ -44,8 +44,8 @@ python examples/e2e_v1.py
 Expected:
 
 - The script resets example projects before each scenario.
-- It verifies ordered patch sets, file create/modify/move/delete lifecycle, and
-  multi-project Server isolation.
+- It verifies ordered patch sets, complete field/accessor/caller updates, file
+  create/modify/move/delete lifecycle, and multi-project Server isolation.
 - It stops any Servers it starts.
 
 ---
@@ -65,7 +65,7 @@ cd examples/shop-dto
 cat > agent-1.patch <<'PATCH'
 --- a/src/main/java/com/shop/OrderDTO.java
 +++ b/src/main/java/com/shop/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,13 +1,13 @@
  package com.shop;
  
  public class OrderDTO {
@@ -73,13 +73,34 @@ cat > agent-1.patch <<'PATCH'
 +    private String externalOrderId;
      private double totalPrice;
  
-     public String getOrderId() {
+-    public String getOrderId() {
+-        return orderId;
++    public String getExternalOrderId() {
++        return externalOrderId;
+     }
+ 
+-    public void setOrderId(String orderId) {
+-        this.orderId = orderId;
++    public void setExternalOrderId(String externalOrderId) {
++        this.externalOrderId = externalOrderId;
+     }
+--- a/src/main/java/com/shop/OrderService.java
++++ b/src/main/java/com/shop/OrderService.java
+@@ -5,7 +5,7 @@ public class OrderService {
+     private UserService userService = new UserService();
+ 
+     public void createOrder(OrderDTO order, UserDTO user) {
+-        order.setOrderId("ORD-001");
++        order.setExternalOrderId("ORD-001");
+         order.setTotalPrice(99.9);
+         this.buyer = user;
+         String buyerName = buyer.getUserName();
 PATCH
 
 cat > agent-2.patch <<'PATCH'
 --- a/src/main/java/com/shop/OrderDTO.java
 +++ b/src/main/java/com/shop/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,13 +1,13 @@
  package com.shop;
  
  public class OrderDTO {
@@ -87,7 +108,28 @@ cat > agent-2.patch <<'PATCH'
 +    private String agentOrderId;
      private double totalPrice;
  
-     public String getOrderId() {
+-    public String getExternalOrderId() {
+-        return externalOrderId;
++    public String getAgentOrderId() {
++        return agentOrderId;
+     }
+ 
+-    public void setExternalOrderId(String externalOrderId) {
+-        this.externalOrderId = externalOrderId;
++    public void setAgentOrderId(String agentOrderId) {
++        this.agentOrderId = agentOrderId;
+     }
+--- a/src/main/java/com/shop/OrderService.java
++++ b/src/main/java/com/shop/OrderService.java
+@@ -5,7 +5,7 @@ public class OrderService {
+     private UserService userService = new UserService();
+ 
+     public void createOrder(OrderDTO order, UserDTO user) {
+-        order.setExternalOrderId("ORD-001");
++        order.setAgentOrderId("ORD-001");
+         order.setTotalPrice(99.9);
+         this.buyer = user;
+         String buyerName = buyer.getUserName();
 PATCH
 ```
 
@@ -118,9 +160,12 @@ voyager apply -y
 
 Expected:
 
-- `OrderDTO.java` contains `private String agentOrderId;`.
+- `OrderDTO.java` contains `private String agentOrderId;`,
+  `getAgentOrderId()`, and `setAgentOrderId(...)`.
+- `OrderService.java` calls `setAgentOrderId(...)`.
 - `private String externalOrderId;` was only an intermediate virtual state.
-- The operation is rejected instead if any hunk context does not match.
+- The operation is rejected instead if any hunk context does not match, or if
+  JDT LS snapshot diagnostics report Java errors.
 
 ### Step A6: Stop Server
 
@@ -263,15 +308,34 @@ Then run patch flows in both projects.
 cat > customer.patch <<'PATCH'
 --- a/src/main/java/com/example/customer/CustomerDTO.java
 +++ b/src/main/java/com/example/customer/CustomerDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,12 +1,12 @@
  package com.example.customer;
  
  public class CustomerDTO {
 -    private String userName;
 +    private String customerName;
  
-     public String getUserName() {
-         return userName;
+-    public String getUserName() {
+-        return userName;
++    public String getCustomerName() {
++        return customerName;
+     }
+ 
+-    public void setUserName(String userName) {
+-        this.userName = userName;
++    public void setCustomerName(String customerName) {
++        this.customerName = customerName;
+     }
+--- a/src/main/java/com/example/customer/CustomerService.java
++++ b/src/main/java/com/example/customer/CustomerService.java
+@@ -2,6 +2,6 @@ package com.example.customer;
+ 
+ public class CustomerService {
+     public String label(CustomerDTO customer) {
+-        return customer.getUserName();
++        return customer.getCustomerName();
+     }
+ }
 PATCH
 
 voyager -v scan .
@@ -285,15 +349,34 @@ voyager apply -y
 cat > order.patch <<'PATCH'
 --- a/src/main/java/com/example/order/OrderDTO.java
 +++ b/src/main/java/com/example/order/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,12 +1,12 @@
  package com.example.order;
  
  public class OrderDTO {
 -    private String orderCode;
 +    private String externalCode;
  
-     public String getOrderCode() {
-         return orderCode;
+-    public String getOrderCode() {
+-        return orderCode;
++    public String getExternalCode() {
++        return externalCode;
+     }
+ 
+-    public void setOrderCode(String orderCode) {
+-        this.orderCode = orderCode;
++    public void setExternalCode(String externalCode) {
++        this.externalCode = externalCode;
+     }
+--- a/src/main/java/com/example/order/OrderService.java
++++ b/src/main/java/com/example/order/OrderService.java
+@@ -2,6 +2,6 @@ package com.example.order;
+ 
+ public class OrderService {
+     public String format(OrderDTO order) {
+-        return order.getOrderCode();
++        return order.getExternalCode();
+     }
+ }
 PATCH
 
 voyager -v scan .
@@ -305,6 +388,8 @@ Expected:
 
 - `mini-customer` modifies only the customer project.
 - `mini-order` modifies only the order project.
+- Both patches update DTO fields, accessors, and service callers so snapshot
+  diagnostics remain clean.
 - `voyager status` in both projects reports each project's own Server pid.
 
 Stop one project:

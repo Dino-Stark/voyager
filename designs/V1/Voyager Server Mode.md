@@ -313,5 +313,5 @@ Expected:
 - Add progress notifications for long scan/index operations.
 - Add cancel requests for long-running work.
 - Expose a stable JSON-RPC schema for IDE/Agent integrations.
-- Strengthen snapshot validation diagnostics.
+- Expand diagnostic coverage for lightweight source-only projects without Java build metadata.
 - Keep the boundary clear: Server executes patch transactions; CLI, IDE, and Agent are clients.

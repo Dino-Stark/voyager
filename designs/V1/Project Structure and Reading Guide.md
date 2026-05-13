@@ -161,6 +161,7 @@ Server processes.
 - The public edit API is patch-only.
 - File create/delete/move and semantic refactors should be represented as unified diffs.
 - Patch validation uses a VFS transaction and a temporary `.voyager/cache/vfs-snapshots` project snapshot.
-- LSP snapshot validation runs when JDT LS is available.
+- LSP snapshot diagnostics run when JDT LS is available and the project has Java build metadata.
 - Static parsing is intentionally conservative.
+- The graph records conservative typed field/method/class references, including simple typed method calls, but it is not a full Java PSI or call graph.
 - Full call graph, Spring DI, Lombok generated-code analysis, reflection, and dynamic proxies are out of V1 scope.

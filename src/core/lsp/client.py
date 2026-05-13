@@ -5,6 +5,7 @@ edits; transactionality and validation live in the execution engine.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -197,11 +198,13 @@ class LspClient:
         project_path: Path,
         config: LanguageConfig | None = None,
         request_timeout: float = 30.0,
+        diagnostics_enabled: bool = False,
     ) -> None:
         self.language: Language = language
         self.project_path: Path = project_path.resolve()
         self.config = config or get_language_config(language)
         self.request_timeout = request_timeout
+        self.diagnostics_enabled = diagnostics_enabled
 
         self._process: asyncio.subprocess.Process | None = None
         self._request_id = 0
@@ -211,6 +214,7 @@ class LspClient:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._open_files: dict[str, int] = {}
         self._diagnostics_cache: dict[str, list[dict[str, Any]]] = {}
+        self._diagnostics_event: asyncio.Event = asyncio.Event()
         self._server_ready_event: asyncio.Event = asyncio.Event()
 
     async def __aenter__(self) -> "LspClient":
@@ -287,15 +291,15 @@ class LspClient:
                         },
                     },
                 },
-                "initializationOptions": self.config.initialization_options,
+                "initializationOptions": self._initialization_options(),
             },
         )
         await self._send_notification("initialized", {})
-        # Explicitly disable diagnostics via workspace configuration; some
-        # jdtls versions ignore the initialization option.
+        # Send workspace configuration explicitly; some jdtls versions ignore
+        # diagnostic settings supplied only in initializationOptions.
         await self._send_notification(
             "workspace/didChangeConfiguration",
-            {"settings": {"java": {"diagnostics": {"enabled": False}}}},
+            {"settings": self._workspace_settings()},
         )
         # Wait for jdtls to signal it has finished internal setup (preference
         # manager, classpath indexing, etc.) before we send the first didOpen.
@@ -346,6 +350,8 @@ class LspClient:
             self._stderr_task = None
             self._process = None
             self._initialized = False
+            self._diagnostics_cache.clear()
+            self._diagnostics_event.clear()
             self._server_ready_event.clear()
 
     def _jdtls_workspace_path(self) -> Path:
@@ -460,6 +466,58 @@ class LspClient:
         await self.open_file(file_path)
         return self._diagnostics_cache.get(path_to_uri(file_path), [])
 
+    async def wait_for_diagnostics(
+        self,
+        file_paths: list[Path],
+        timeout: float = 5.0,
+        settle_time: float = 0.3,
+    ) -> dict[Path, list[dict[str, Any]]]:
+        """
+        Open files and return the latest diagnostics the server publishes.
+
+        JDT LS publishes diagnostics asynchronously. This helper waits until
+        each requested file has produced at least one diagnostic notification,
+        or until ``timeout`` expires. A short settle window lets late updates
+        replace an initial empty result without blocking normal patch flows for
+        long when diagnostics are unavailable or quiet.
+        """
+        paths = sorted({path.resolve() for path in file_paths})
+        if not paths:
+            return {}
+
+        self._diagnostics_event.clear()
+        for file_path in paths:
+            await self.open_file(file_path)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        uris = {path_to_uri(file_path): file_path for file_path in paths}
+
+        while loop.time() < deadline:
+            if all(uri in self._diagnostics_cache for uri in uris):
+                break
+            remaining = max(0.0, deadline - loop.time())
+            try:
+                await asyncio.wait_for(
+                    self._diagnostics_event.wait(),
+                    timeout=min(remaining, 0.5),
+                )
+            except asyncio.TimeoutError:
+                pass
+            self._diagnostics_event.clear()
+
+        if settle_time > 0:
+            try:
+                await asyncio.wait_for(self._diagnostics_event.wait(), timeout=settle_time)
+            except asyncio.TimeoutError:
+                pass
+            self._diagnostics_event.clear()
+
+        return {
+            file_path: self._diagnostics_cache.get(uri, [])
+            for uri, file_path in uris.items()
+        }
+
     async def open_file(self, file_path: Path) -> None:
         """Notify the language server that a file is open."""
 
@@ -517,6 +575,17 @@ class LspClient:
 
     async def _send_notification(self, method: str, params: Any) -> None:
         await self._write_message({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def _initialization_options(self) -> dict[str, Any]:
+        options: dict[str, Any] = copy.deepcopy(self.config.initialization_options)
+        java_settings = options.setdefault("settings", {}).setdefault("java", {})
+        java_settings.setdefault("diagnostics", {})["enabled"] = self.diagnostics_enabled
+        if self.diagnostics_enabled:
+            java_settings.setdefault("autobuild", {})["enabled"] = True
+        return options
+
+    def _workspace_settings(self) -> dict[str, Any]:
+        return self._initialization_options().get("settings", {})
 
     async def _write_message(self, message: dict[str, Any]) -> None:
         if self._process is None or self._process.stdin is None:
@@ -603,6 +672,7 @@ class LspClient:
         params = message.get("params", {})
         if method == "textDocument/publishDiagnostics":
             self._diagnostics_cache[params.get("uri", "")] = params.get("diagnostics", [])
+            self._diagnostics_event.set()
         elif method == "language/status":
             status_type = params.get("type", "")
             status_msg = params.get("message", "")

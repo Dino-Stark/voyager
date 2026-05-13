@@ -172,8 +172,9 @@ flowchart LR
     engine_apply --> pre_validate_apply["validate_pre"]
     pre_validate_apply --> vfs_tx_apply["VirtualFileSystemTransaction"]
     vfs_tx_apply --> materialize["materialize .voyager/cache/vfs-snapshots/patch-id"]
-    materialize --> parse_snapshot["parse snapshot through JDT LS when available"]
-    parse_snapshot --> rebuild["rebuild graph from virtual state"]
+    materialize --> parse_snapshot["parse snapshot through short-lived JDT LS<br/>when available and project has build metadata"]
+    parse_snapshot --> diagnostics["reject error diagnostics"]
+    diagnostics --> rebuild["rebuild graph from virtual state"]
     rebuild --> post_validate["validate_post"]
     post_validate --> commit["commit all file changes"]
     commit --> persist["save graph and operation log"]
@@ -182,7 +183,8 @@ flowchart LR
 Patch construction is static and exact: Voyager does not try to infer intent or
 perform semantic refactoring. Semantic confidence comes from applying the whole
 task to a virtual filesystem, rebuilding the graph, and validating a temporary
-project snapshot with LSP when JDT LS is available.
+project snapshot with LSP diagnostics when JDT LS is available and the project
+has Java build metadata.
 
 ---
 
@@ -215,6 +217,8 @@ Patch/VFS validation checks:
 - every hunk context matches exactly,
 - create/delete/move state transitions are valid,
 - the patch set produces at least one final file change.
+- when JDT LS is available and the project has Java build metadata, the
+  materialized snapshot must not publish error-level diagnostics for Java files.
 
 Post-validation checks:
 
@@ -263,10 +267,12 @@ transaction.
    - Exclude `.git` and `.voyager` from the snapshot copy.
 
 4. Semantic Validation
-   - Parse the snapshot with JDT LS when available.
+   - Parse the snapshot with a short-lived JDT LS client when JDT LS is
+     available and the project has Java build metadata.
+   - Check error-level diagnostics across Java files in the snapshot and reject
+     the patch set if compile/type errors are reported.
    - Build a graph from the virtual final state.
    - Run built-in and custom validators.
-   - Current V1 does not yet consume LSP diagnostics from the snapshot session.
 
 5. Commit
    - Commit the whole patch set atomically.
@@ -302,13 +308,21 @@ rollback.
 
 ---
 
-## Future: LSP Diagnostics
+## LSP Diagnostics
 
-Current snapshot validation uses a real temporary project plus the normal Java
-parser path, so JDT LS can build document symbols and Voyager can rebuild the
-semantic graph from the patched state. It does not yet collect or interpret LSP
-diagnostics from that snapshot.
+Snapshot validation uses a real temporary project plus the normal Java parser
+path, so JDT LS can build document symbols and Voyager can rebuild the semantic
+graph from the patched state. For projects with Java build metadata such as
+`pom.xml`, Gradle files, or Eclipse `.classpath`/`.project`, Voyager starts a
+short-lived snapshot-scoped LSP client with diagnostics enabled and rejects any
+error-level diagnostics before source files are committed.
 
-A future validation layer should consume snapshot diagnostics and reject patch
-sets that introduce Java compile/type errors reported by JDT LS. This would make
-semantic validation stronger without adding a PSI-like editing layer.
+The long-lived Server-owned LSP client remains rooted at the real project and is
+used for scan and graph loading. Snapshot validation intentionally uses a
+separate client because diagnostics must describe the virtual final state under
+`.voyager/cache/vfs-snapshots/`, not the live source tree.
+
+If JDT LS is unavailable, or the project has no Java build metadata, V1 falls
+back to exact patch/VFS validation and static graph rebuild. This avoids false
+package-layout diagnostics for lightweight fixtures while still keeping the
+stronger diagnostic gate for normal Maven/Gradle/Eclipse projects.

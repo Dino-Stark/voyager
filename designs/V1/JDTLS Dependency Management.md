@@ -8,14 +8,16 @@ patch snapshot validation.
 JDT LS is required for:
 
 - LSP-based `documentSymbol` scan when available,
-- LSP-backed validation of temporary VFS project snapshots when available.
+- LSP-backed validation of temporary VFS project snapshots when available,
+- error-diagnostic rejection for snapshot Java files in projects with Java build metadata.
 
 JDT LS is not required for every V1 behavior:
 
 - static parsing can still build a graph for simple projects,
 - `plan` can run from the saved/static graph,
 - patch construction and exact hunk application are static,
-- snapshot validation falls back to the static parser if JDT LS is unavailable.
+- snapshot validation falls back to the static parser if JDT LS is unavailable
+  or the project has no Java build metadata.
 
 ---
 
@@ -138,9 +140,12 @@ Responsibilities:
   - `rename_symbol()`
 - shut down the subprocess on `voyager stop`.
 
-Server mode owns the long-lived `LspClient` for project scan. Patch snapshot
-validation uses temporary real project directories under `.voyager/cache` so
-JDT LS can reason about normal file URIs.
+Server mode owns the long-lived `LspClient` for project scan and graph loading.
+Patch snapshot validation uses temporary real project directories under
+`.voyager/cache` so JDT LS can reason about normal file URIs. Snapshot
+validation uses a separate short-lived `LspClient` rooted at the temporary
+snapshot with diagnostics enabled; this keeps snapshot diagnostics isolated from
+the long-lived project Server client.
 
 ---
 
@@ -167,9 +172,13 @@ If JDT LS cannot be found:
   and static graph rebuild,
 - LSP snapshot validation is skipped.
 
+If the project has no Java build metadata (`pom.xml`, Gradle files, or Eclipse
+`.classpath`/`.project`), Voyager also skips LSP snapshot diagnostics. This
+avoids false package-layout diagnostics on lightweight source-only fixtures.
+
 This is intentional for V1 testability and lightweight environments. The
-long-term direction is to strengthen semantic snapshot validation rather than
-reintroduce PSI-like edit operations.
+long-term direction is to strengthen semantic snapshot validation without
+reintroducing PSI-like edit operations.
 
 ---
 

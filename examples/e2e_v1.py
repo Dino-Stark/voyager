@@ -54,7 +54,7 @@ def run_shop_dto_patch_set_flow() -> None:
     patch_one.write_text(
         """--- a/src/main/java/com/shop/OrderDTO.java
 +++ b/src/main/java/com/shop/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,13 +1,13 @@
  package com.shop;
  
  public class OrderDTO {
@@ -62,14 +62,35 @@ def run_shop_dto_patch_set_flow() -> None:
 +    private String externalOrderId;
      private double totalPrice;
  
-     public String getOrderId() {
+-    public String getOrderId() {
+-        return orderId;
++    public String getExternalOrderId() {
++        return externalOrderId;
+     }
+ 
+-    public void setOrderId(String orderId) {
+-        this.orderId = orderId;
++    public void setExternalOrderId(String externalOrderId) {
++        this.externalOrderId = externalOrderId;
+     }
+--- a/src/main/java/com/shop/OrderService.java
++++ b/src/main/java/com/shop/OrderService.java
+@@ -5,7 +5,7 @@ public class OrderService {
+     private UserService userService = new UserService();
+ 
+     public void createOrder(OrderDTO order, UserDTO user) {
+-        order.setOrderId("ORD-001");
++        order.setExternalOrderId("ORD-001");
+         order.setTotalPrice(99.9);
+         this.buyer = user;
+         String buyerName = buyer.getUserName();
 """,
         encoding="utf-8",
     )
     patch_two.write_text(
         """--- a/src/main/java/com/shop/OrderDTO.java
 +++ b/src/main/java/com/shop/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,13 +1,13 @@
  package com.shop;
  
  public class OrderDTO {
@@ -77,7 +98,28 @@ def run_shop_dto_patch_set_flow() -> None:
 +    private String agentOrderId;
      private double totalPrice;
  
-     public String getOrderId() {
+-    public String getExternalOrderId() {
+-        return externalOrderId;
++    public String getAgentOrderId() {
++        return agentOrderId;
+     }
+ 
+-    public void setExternalOrderId(String externalOrderId) {
+-        this.externalOrderId = externalOrderId;
++    public void setAgentOrderId(String agentOrderId) {
++        this.agentOrderId = agentOrderId;
+     }
+--- a/src/main/java/com/shop/OrderService.java
++++ b/src/main/java/com/shop/OrderService.java
+@@ -5,7 +5,7 @@ public class OrderService {
+     private UserService userService = new UserService();
+ 
+     public void createOrder(OrderDTO order, UserDTO user) {
+-        order.setExternalOrderId("ORD-001");
++        order.setAgentOrderId("ORD-001");
+         order.setTotalPrice(99.9);
+         this.buyer = user;
+         String buyerName = buyer.getUserName();
 """,
         encoding="utf-8",
     )
@@ -87,7 +129,11 @@ def run_shop_dto_patch_set_flow() -> None:
         run_cli(project, "plan", "patch", str(patch_one), str(patch_two))
         run_cli(project, "apply", "-y")
         order_dto = read(project / "src/main/java/com/shop/OrderDTO.java")
+        order_service = read(project / "src/main/java/com/shop/OrderService.java")
         assert_contains(order_dto, "private String agentOrderId;")
+        assert_contains(order_dto, "getAgentOrderId()")
+        assert_contains(order_dto, "setAgentOrderId")
+        assert_contains(order_service, "setAgentOrderId")
         assert_not_contains(order_dto, "private String externalOrderId;")
         assert_not_contains(order_dto, "private String orderId;")
     finally:
@@ -190,30 +236,68 @@ def run_multi_project_patch_isolation_flow() -> None:
     customer_patch.write_text(
         """--- a/src/main/java/com/example/customer/CustomerDTO.java
 +++ b/src/main/java/com/example/customer/CustomerDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,12 +1,12 @@
  package com.example.customer;
  
  public class CustomerDTO {
 -    private String userName;
 +    private String customerName;
  
-     public String getUserName() {
-         return userName;
+-    public String getUserName() {
+-        return userName;
++    public String getCustomerName() {
++        return customerName;
+     }
+ 
+-    public void setUserName(String userName) {
+-        this.userName = userName;
++    public void setCustomerName(String customerName) {
++        this.customerName = customerName;
+     }
+--- a/src/main/java/com/example/customer/CustomerService.java
++++ b/src/main/java/com/example/customer/CustomerService.java
+@@ -2,6 +2,6 @@ package com.example.customer;
+ 
+ public class CustomerService {
+     public String label(CustomerDTO customer) {
+-        return customer.getUserName();
++        return customer.getCustomerName();
+     }
+ }
 """,
         encoding="utf-8",
     )
     order_patch.write_text(
         """--- a/src/main/java/com/example/order/OrderDTO.java
 +++ b/src/main/java/com/example/order/OrderDTO.java
-@@ -1,7 +1,7 @@
+@@ -1,12 +1,12 @@
  package com.example.order;
  
  public class OrderDTO {
 -    private String orderCode;
 +    private String externalCode;
  
-     public String getOrderCode() {
-         return orderCode;
+-    public String getOrderCode() {
+-        return orderCode;
++    public String getExternalCode() {
++        return externalCode;
+     }
+ 
+-    public void setOrderCode(String orderCode) {
+-        this.orderCode = orderCode;
++    public void setExternalCode(String externalCode) {
++        this.externalCode = externalCode;
+     }
+--- a/src/main/java/com/example/order/OrderService.java
++++ b/src/main/java/com/example/order/OrderService.java
+@@ -2,6 +2,6 @@ package com.example.order;
+ 
+ public class OrderService {
+     public String format(OrderDTO order) {
+-        return order.getOrderCode();
++        return order.getExternalCode();
+     }
+ }
 """,
         encoding="utf-8",
     )
@@ -234,6 +318,10 @@ def run_multi_project_patch_isolation_flow() -> None:
             read(customer / "src/main/java/com/example/customer/CustomerDTO.java"),
             "customerName",
         )
+        assert_contains(
+            read(customer / "src/main/java/com/example/customer/CustomerService.java"),
+            "getCustomerName",
+        )
 
         run_cli(order, "scan", ".")
         run_cli(order, "plan", "patch", str(order_patch))
@@ -241,6 +329,10 @@ def run_multi_project_patch_isolation_flow() -> None:
         assert_contains(
             read(order / "src/main/java/com/example/order/OrderDTO.java"),
             "externalCode",
+        )
+        assert_contains(
+            read(order / "src/main/java/com/example/order/OrderService.java"),
+            "getExternalCode",
         )
 
         run_cli(customer, "stop")

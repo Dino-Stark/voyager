@@ -162,11 +162,24 @@ class GraphBuilder:
         except OSError:
             return
 
-        variable_types = self._collect_variable_types(text, cls)
-        if not variable_types:
-            return
-
         file_path = self._display_path(cls.file_path)
+        self_fields = {field.name for field in cls.fields}
+        for match in re.finditer(r"\bthis\s*\.\s*(?P<field>[A-Za-z_$][\w$]*)\b", text):
+            field_name = match.group("field")
+            if field_name not in self_fields:
+                continue
+            from_symbol = self._nearest_method_id(cls, text, match.start()) or cls.fqn
+            self._add_reference(
+                from_symbol,
+                f"{cls.fqn}.{field_name}",
+                RefType.FIELD_ACCESS,
+                file_path,
+                text.count("\n", 0, match.start()) + 1,
+                match.start() - text.rfind("\n", 0, match.start()),
+                {"receiver": "this"},
+            )
+
+        variable_types = self._collect_variable_types(text, cls)
         for var_name, class_id in variable_types.items():
             target_cls = self._classes_by_fqn.get(class_id)
             if target_cls is None:
@@ -196,10 +209,10 @@ class GraphBuilder:
         """
         Extract simple typed method call references.
 
-        This records ``var.method(...)`` when ``var`` has an explicit known type
-        in the same file. It is intentionally conservative and exists mainly so
-        graph output can include simple cross-file method-call relationships for
-        patch review and validation.
+        This records calls where the receiver has an explicit known type in the
+        same file, such as ``var.method(...)``, ``this.field.method(...)``, and
+        ``TypeName.staticMethod(...)``. It intentionally remains a conservative
+        graph edge extractor rather than a complete Java call graph.
         """
         try:
             text = cls.file_path.read_text(encoding="utf-8")
@@ -207,33 +220,70 @@ class GraphBuilder:
             return
 
         variable_types = self._collect_variable_types(text, cls)
-        if not variable_types:
-            return
-
         file_path = self._display_path(cls.file_path)
+
         for var_name, class_id in variable_types.items():
             target_cls = self._classes_by_fqn.get(class_id)
             if target_cls is None:
                 continue
-            known_methods = {method.name for method in target_cls.methods}
+            for match in _receiver_call_matches(text, var_name):
+                self._add_method_call_reference(cls, target_cls, file_path, text, match, var_name)
+
+        for field in cls.fields:
+            target_id = self._resolve_type(field.type_name, cls)
+            if target_id is None:
+                continue
+            target_cls = self._classes_by_fqn.get(target_id)
+            if target_cls is None:
+                continue
             pattern = re.compile(
-                rf"\b{re.escape(var_name)}\s*\.\s*(?P<member>[A-Za-z_$][\w$]*)\s*\("
+                rf"\bthis\s*\.\s*{re.escape(field.name)}\s*\.\s*"
+                rf"(?P<member>[A-Za-z_$][\w$]*)\s*\("
             )
             for match in pattern.finditer(text):
-                member = match.group("member")
-                if member not in known_methods:
-                    continue
-                target_method = f"{class_id}.{member}"
-                from_symbol = self._nearest_method_id(cls, text, match.start()) or cls.fqn
-                self._add_reference(
-                    from_symbol,
-                    target_method,
-                    RefType.METHOD_CALL,
+                self._add_method_call_reference(
+                    cls,
+                    target_cls,
                     file_path,
-                    text.count("\n", 0, match.start()) + 1,
-                    match.start() - text.rfind("\n", 0, match.start()),
-                    {"receiver": var_name},
+                    text,
+                    match,
+                    f"this.{field.name}",
                 )
+
+        for simple_name, matches in self._fqn_by_simple.items():
+            if simple_name == cls.name:
+                continue
+            if len(matches) != 1:
+                continue
+            target_cls = self._classes_by_fqn.get(matches[0])
+            if target_cls is None:
+                continue
+            for match in _receiver_call_matches(text, simple_name):
+                self._add_method_call_reference(cls, target_cls, file_path, text, match, simple_name)
+
+    def _add_method_call_reference(
+        self,
+        cls: JavaClass,
+        target_cls: JavaClass,
+        file_path: str,
+        text: str,
+        match: re.Match[str],
+        receiver: str,
+    ) -> None:
+        member = match.group("member")
+        known_methods = {method.name for method in target_cls.methods}
+        if member not in known_methods:
+            return
+        from_symbol = self._nearest_method_id(cls, text, match.start()) or cls.fqn
+        self._add_reference(
+            from_symbol,
+            f"{target_cls.fqn}.{member}",
+            RefType.METHOD_CALL,
+            file_path,
+            text.count("\n", 0, match.start()) + 1,
+            match.start() - text.rfind("\n", 0, match.start()),
+            {"receiver": receiver},
+        )
 
     def _collect_variable_types(self, text: str, cls: JavaClass) -> dict[str, str]:
         result: dict[str, str] = {}
@@ -243,9 +293,12 @@ class GraphBuilder:
 
         type_pattern = "|".join(re.escape(name) for name in type_names)
         decl_re = re.compile(rf"\b(?P<type>{type_pattern})\s+(?P<name>[A-Za-z_$][\w$]*)\b")
-        for match in decl_re.finditer(_remove_comments_and_strings(text)):
+        cleaned = _remove_comments_and_strings(text)
+        for match in decl_re.finditer(cleaned):
             type_name = match.group("type")
             var_name = match.group("name")
+            if _looks_like_method_declaration(cleaned, match.end()):
+                continue
             target = self._resolve_type(type_name, cls)
             if target and var_name not in self._fqn_by_simple:
                 result[var_name] = target
@@ -341,6 +394,18 @@ def _type_candidates(type_name: str) -> list[str]:
         "Optional",
     }
     return [token for token in tokens if token not in primitives]
+
+
+def _receiver_call_matches(text: str, receiver: str) -> list[re.Match[str]]:
+    pattern = re.compile(
+        rf"(?<![A-Za-z_$.\]])\b{re.escape(receiver)}\s*\.\s*"
+        rf"(?P<member>[A-Za-z_$][\w$]*)\s*\("
+    )
+    return list(pattern.finditer(text))
+
+
+def _looks_like_method_declaration(text: str, name_end: int) -> bool:
+    return text[name_end:].lstrip().startswith("(")
 
 
 def _remove_comments_and_strings(text: str) -> str:

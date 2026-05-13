@@ -10,7 +10,7 @@ from core.diff.patch_engine import PatchParseError, parse_unified_patch
 from core.engine.errors import EngineError, ErrorType
 from core.graph.builder import GraphBuilder
 from core.graph.semantic_graph import SemanticGraph
-from core.lsp.client import LspPosition, LspTextEdit
+from core.lsp.client import LspClient, LspPosition, LspTextEdit
 from core.lsp.config import Language, get_language_config
 from core.operation.models import ApplyResult, Operation, PatchOperation, PlanResult
 from core.parser.java_parser import (
@@ -65,6 +65,7 @@ class ExecutionEngine:
         self.storage = storage or StorageManager(self.project_path)
         self.graph: SemanticGraph | None = None
         self.validator = RuleValidator(self.storage.load_rules_path())
+        self._project_lsp_client: object | None = None
 
     def ensure_graph(self, force_rebuild: bool = False) -> SemanticGraph:
         """
@@ -81,7 +82,10 @@ class ExecutionEngine:
 
         graph = None if force_rebuild else self.storage.load_graph()
         if graph is None:
-            classes = await parse_java_project_async(self.project_path)
+            classes = await parse_java_project_async(
+                self.project_path,
+                lsp_client=self._project_lsp_client,
+            )
             graph = GraphBuilder(self.project_path).build(classes)
             self.storage.save_graph(graph)
 
@@ -105,8 +109,14 @@ class ExecutionEngine:
 
     def set_lsp_client(self, client: object | None) -> None:
         """
-        Compatibility hook for ProjectSession; patch validation uses snapshots.
+        Record the long-lived project LSP client owned by ProjectSession.
+
+        Patch validation intentionally uses a separate short-lived client rooted
+        at the temporary snapshot, because JDT LS workspaces are project-root
+        scoped and diagnostics must describe the virtual final state, not the
+        caller's live source tree.
         """
+        self._project_lsp_client = client
 
     def plan(self, operation: Operation) -> PlanResult:
         """
@@ -286,7 +296,8 @@ class ExecutionEngine:
         """
         Validate the virtual transaction using a temporary snapshot under .voyager.
         """
-        if get_language_config(Language.JAVA).find_server_command() is None:
+        java_config = get_language_config(Language.JAVA)
+        if java_config.find_server_command() is None or not _has_java_build_metadata(self.project_path):
             return
 
         snapshot_path: Path | None = None
@@ -296,9 +307,25 @@ class ExecutionEngine:
                 transaction,
                 self.storage.get_vfs_snapshot_dir(),
             )
-            classes = await parse_java_project_async(snapshot_path)
+            async with LspClient(
+                Language.JAVA,
+                snapshot_path,
+                config=java_config,
+                diagnostics_enabled=True,
+            ) as snapshot_client:
+                classes = await parse_java_project_async(
+                    snapshot_path,
+                    lsp_client=snapshot_client,
+                )
+                await self._reject_snapshot_diagnostics_async(
+                    snapshot_path,
+                    snapshot_client,
+                    operation,
+                )
             GraphBuilder(snapshot_path).build(classes)
         except Exception as exc:
+            if isinstance(exc, EngineError):
+                raise
             raise EngineError(
                 ErrorType.VALIDATION_FAILED,
                 f"LSP snapshot validation failed: {exc}",
@@ -308,6 +335,52 @@ class ExecutionEngine:
         finally:
             if snapshot_path is not None:
                 shutil.rmtree(snapshot_path, ignore_errors=True)
+
+    async def _reject_snapshot_diagnostics_async(
+        self,
+        snapshot_path: Path,
+        snapshot_client: LspClient,
+        operation: PatchOperation,
+    ) -> None:
+        """
+        Reject snapshots that publish error diagnostics for Java project files.
+        """
+        java_files = self._snapshot_java_files(snapshot_path)
+        diagnostics_by_file = await snapshot_client.wait_for_diagnostics(java_files)
+        errors = [
+            _format_lsp_diagnostic(path, diagnostic, snapshot_path)
+            for path, diagnostics in diagnostics_by_file.items()
+            for diagnostic in diagnostics
+            if _is_error_diagnostic(diagnostic)
+        ]
+        if not errors:
+            return
+
+        preview = "; ".join(errors[:3])
+        if len(errors) > 3:
+            preview = f"{preview}; ... ({len(errors)} errors total)"
+        raise EngineError(
+            ErrorType.VALIDATION_FAILED,
+            f"LSP snapshot diagnostics failed: {preview}",
+            target=operation.description,
+            file_path=str(snapshot_path),
+        )
+
+    def _snapshot_java_files(
+        self,
+        snapshot_path: Path,
+    ) -> list[Path]:
+        """
+        Return Java files to check inside a snapshot root.
+
+        Diagnostics can surface in callers that were not directly patched, so
+        V1 checks every Java source file in the temporary project snapshot.
+        """
+        return sorted(
+            path
+            for path in snapshot_path.rglob("*.java")
+            if not _is_ignored_snapshot_path(path, snapshot_path)
+        )
 
     def _assert_inside_project(self, path: Path) -> None:
         """
@@ -421,3 +494,60 @@ def _normalize_newlines(modified: str, original: str) -> str:
     """
     preferred = "\r\n" if "\r\n" in original else "\n"
     return modified.replace("\r\n", "\n").replace("\r", "\n").replace("\n", preferred)
+
+
+def _is_error_diagnostic(diagnostic: dict[str, Any]) -> bool:
+    """
+    Return true for LSP error diagnostics.
+
+    Per LSP, severity 1 is Error. Some servers omit severity for errors, so
+    missing severity is treated conservatively as an error during snapshot
+    validation.
+    """
+    return diagnostic.get("severity", 1) == 1
+
+
+def _format_lsp_diagnostic(path: Path, diagnostic: dict[str, Any], root: Path) -> str:
+    """
+    Format one LSP diagnostic for a concise validation error.
+    """
+    rel_path = path.resolve()
+    try:
+        display_path = rel_path.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        display_path = rel_path.as_posix()
+    start = diagnostic.get("range", {}).get("start", {})
+    line = int(start.get("line", 0)) + 1
+    character = int(start.get("character", 0)) + 1
+    message = str(diagnostic.get("message", "Java diagnostic error")).strip()
+    return f"{display_path}:{line}:{character}: {message}"
+
+
+def _is_ignored_snapshot_path(path: Path, snapshot_root: Path) -> bool:
+    ignored_parts = {".git", ".voyager", "target", "build", ".gradle", ".idea"}
+    try:
+        relative = path.relative_to(snapshot_root)
+    except ValueError:
+        relative = path
+    return any(part in ignored_parts for part in relative.parts)
+
+
+def _has_java_build_metadata(project_path: Path) -> bool:
+    """
+    Return whether JDT LS can infer a Java source layout for the project.
+
+    Without Maven/Gradle/Eclipse metadata, jdtls treats ``src/main/java`` as a
+    plain folder and emits package-mismatch diagnostics for otherwise normal
+    Maven-style sources. Static validation remains the fallback for those
+    lightweight fixtures.
+    """
+    markers = {
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        ".classpath",
+        ".project",
+    }
+    return any((project_path / marker).exists() for marker in markers)

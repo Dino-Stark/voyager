@@ -29,7 +29,7 @@ flowchart TD
     send["2. Send operation to Server<br/>VoyagerServerClient.apply()"]
     pre["3. Pre-validate<br/>reject non-patch operations<br/>run custom graph rules"]
     tx["4. Build virtual transaction<br/>parse ordered unified diff<br/>validate paths and hunk context<br/>track modify/create/delete/move"]
-    snapshot["5. Snapshot validation<br/>copy to .voyager/cache/vfs-snapshots/patch-id<br/>apply virtual state<br/>parse with JDT LS when available"]
+    snapshot["5. Snapshot validation<br/>copy to .voyager/cache/vfs-snapshots/patch-id<br/>apply virtual state<br/>parse with snapshot JDT LS when available<br/>reject error diagnostics"]
     rebuild["6. Rebuild graph<br/>parse modified, created, moved, and non-deleted Java files"]
     post["7. Post-validate<br/>RuleValidator.validate_post(new_graph, operation)"]
     commit["8. Commit<br/>write, create, delete, and move files<br/>rollback on write failure"]
@@ -82,13 +82,18 @@ project snapshot under:
 ```
 
 The snapshot excludes `.git` and `.voyager`, applies the virtual final state, and
-is then parsed through the normal Java parser path. If JDT LS is available, that
-parser uses `textDocument/documentSymbol`; otherwise it falls back to the static
-parser so lightweight test environments can still run.
+is then parsed through the normal Java parser path. If JDT LS is available and
+the original project has Java build metadata (`pom.xml`, Gradle files, or
+Eclipse `.classpath`/`.project`), Voyager starts a short-lived LSP client rooted
+at the snapshot, enables diagnostics, opens Java files in the snapshot, and
+rejects any error-level diagnostics before committing.
 
-Current V1 uses the snapshot for graph construction and rule validation. It does
-not yet consume LSP diagnostics from the snapshot session; adding that diagnostic
-check is the next natural strengthening step.
+The project Server still owns a long-lived LSP client for the real project.
+Snapshot validation deliberately uses its own LSP client because diagnostics
+must refer to the virtual final state, not the live source tree. If JDT LS is
+unavailable, or the project has no Java build metadata, snapshot diagnostic
+validation is skipped and Voyager relies on exact patch/VFS validation plus
+static graph rebuild.
 
 The snapshot is deleted after validation.
 
@@ -132,6 +137,7 @@ their original content and moved destinations are removed.
 | patch moves to an existing file | validation error, no files touched |
 | patch set produces no final changes | validation error, no files touched |
 | LSP snapshot validation fails | validation error, no files touched |
+| LSP snapshot reports error diagnostics | validation error, no files touched |
 | post-validation finds duplicate definitions | invalid result, no files touched |
 | write failure | rollback attempted, error result |
 
@@ -140,6 +146,6 @@ their original content and moved destinations are removed.
 ## Current V1 Limits
 
 - `patch` applies unified diffs exactly; it is not a semantic refactoring operation.
-- JDT LS snapshot validation is skipped when JDT LS is unavailable.
+- JDT LS snapshot diagnostics are skipped when JDT LS is unavailable or the project lacks Java build metadata.
 - Static parsing is intentionally conservative.
-- LSP diagnostics beyond graph construction are a future improvement.
+- The semantic graph records conservative typed references; it is not a full Java PSI or call graph.

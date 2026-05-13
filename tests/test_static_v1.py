@@ -7,11 +7,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cli.commands.plan import _build_operation
 from core.diff.patch_engine import apply_parsed_patch, parse_unified_patch
-from core.engine.execution_engine import ExecutionEngine, _normalize_newlines, apply_lsp_edits
+from core.engine.errors import EngineError
+from core.engine.execution_engine import (
+    ExecutionEngine,
+    _format_lsp_diagnostic,
+    _has_java_build_metadata,
+    _is_error_diagnostic,
+    _normalize_newlines,
+    apply_lsp_edits,
+)
 from core.graph.builder import GraphBuilder
-from core.lsp.client import LspPosition, LspRange, LspTextEdit
+from core.graph.semantic_graph import RefType
+from core.lsp.client import LspClient, LspPosition, LspRange, LspTextEdit
+from core.lsp.config import Language
 from core.operation.models import PatchOperation
 from core.parser.java_parser import parse_java_project_static
+from utils.async_helpers import run_async
 
 
 def write(path: Path, content: str) -> None:
@@ -60,6 +71,56 @@ def test_static_parser_and_graph_find_dto_field_references(java_project: Path) -
         "src/main/java/com/acme/OrderDTO.java",
         "src/main/java/com/acme/OrderService.java",
     ]
+
+
+def test_graph_extracts_conservative_this_and_typed_method_references(tmp_path: Path) -> None:
+    write(
+        tmp_path / "src/main/java/com/acme/UserDTO.java",
+        """package com.acme;
+
+public class UserDTO {
+    private String userName;
+
+    public String getUserName() {
+        return this.userName;
+    }
+}
+""",
+    )
+    write(
+        tmp_path / "src/main/java/com/acme/UserService.java",
+        """package com.acme;
+
+public class UserService {
+    private UserDTO current;
+
+    public String describe(UserDTO user) {
+        String direct = user.getUserName();
+        return this.current.getUserName() + direct;
+    }
+}
+""",
+    )
+
+    graph = GraphBuilder(tmp_path).build(parse_java_project_static(tmp_path))
+    user_name = graph.resolve_field("UserDTO", "userName")
+    getter = graph.resolve_method("UserDTO", "getUserName")
+
+    assert user_name is not None
+    assert getter is not None
+    assert any(
+        ref.ref_type == RefType.FIELD_ACCESS
+        and ref.from_symbol == getter.id
+        and ref.to_symbol == user_name.id
+        and ref.extra["receiver"] == "this"
+        for ref in graph.references
+    )
+    method_refs = [
+        ref
+        for ref in graph.find_references_to(getter.id)
+        if ref.ref_type == RefType.METHOD_CALL
+    ]
+    assert {ref.extra["receiver"] for ref in method_refs} == {"user", "this.current"}
 
 
 def test_cli_rejects_structured_edit_operations() -> None:
@@ -187,6 +248,43 @@ def test_apply_lsp_edits_uses_reverse_order() -> None:
 def test_normalize_newlines_preserves_original_style() -> None:
     assert _normalize_newlines("a\r\nb\rc\n", "x\ny\n") == "a\nb\nc\n"
     assert _normalize_newlines("a\nb\r\nc\n", "x\r\ny\r\n") == "a\r\nb\r\nc\r\n"
+
+
+def test_lsp_diagnostic_helpers_format_errors(tmp_path: Path) -> None:
+    java_file = tmp_path / "src/main/java/com/acme/UserDTO.java"
+    write(java_file, "package com.acme;\nclass UserDTO {}\n")
+    diagnostic = {
+        "severity": 1,
+        "message": "Cannot resolve symbol",
+        "range": {"start": {"line": 1, "character": 6}},
+    }
+
+    assert _is_error_diagnostic(diagnostic)
+    assert _is_error_diagnostic({"message": "server omitted severity"})
+    assert not _is_error_diagnostic({"severity": 2, "message": "warning"})
+    assert _format_lsp_diagnostic(java_file, diagnostic, tmp_path) == (
+        "src/main/java/com/acme/UserDTO.java:2:7: Cannot resolve symbol"
+    )
+
+
+def test_java_build_metadata_detection(tmp_path: Path) -> None:
+    assert not _has_java_build_metadata(tmp_path)
+
+    (tmp_path / "pom.xml").write_text("<project />", encoding="utf-8")
+
+    assert _has_java_build_metadata(tmp_path)
+
+
+def test_lsp_client_diagnostics_configuration_is_opt_in(tmp_path: Path) -> None:
+    scan_client = LspClient(Language.JAVA, tmp_path)
+    snapshot_client = LspClient(Language.JAVA, tmp_path, diagnostics_enabled=True)
+
+    scan_java_settings = scan_client._workspace_settings()["java"]
+    snapshot_java_settings = snapshot_client._workspace_settings()["java"]
+
+    assert scan_java_settings["diagnostics"]["enabled"] is False
+    assert snapshot_java_settings["diagnostics"]["enabled"] is True
+    assert snapshot_java_settings["autobuild"]["enabled"] is True
 
 
 def test_patch_operation_applies_unified_diff(java_project: Path) -> None:
@@ -333,6 +431,61 @@ def test_patch_operation_rejects_context_mismatch(java_project: Path) -> None:
 
     assert not result.success
     assert result.errors[0]["type"] == "validation_failed"
+
+
+def test_snapshot_diagnostics_reject_error_without_writing(java_project: Path) -> None:
+    engine = ExecutionEngine(java_project)
+    operation = PatchOperation(patch="--- /dev/null\n+++ b/Noop.java\n@@ -0,0 +1,1 @@\n+class Noop {}\n")
+    source = java_project / "src/main/java/com/acme/OrderDTO.java"
+    snapshot = java_project / ".voyager/cache/vfs-snapshots/patch-test"
+    snapshot_file = snapshot / "src/main/java/com/acme/OrderDTO.java"
+    write(snapshot_file, source.read_text(encoding="utf-8"))
+
+    class FakeSnapshotClient:
+        async def wait_for_diagnostics(self, file_paths):
+            assert snapshot_file in file_paths
+            return {
+                snapshot_file: [
+                    {
+                        "severity": 1,
+                        "message": "Broken Java",
+                        "range": {"start": {"line": 2, "character": 4}},
+                    }
+                ]
+            }
+
+    with pytest.raises(EngineError, match="LSP snapshot diagnostics failed"):
+        run_async(
+            engine._reject_snapshot_diagnostics_async(
+                snapshot,
+                FakeSnapshotClient(),
+                operation,
+            )
+        )
+
+    assert "private String userId;" in source.read_text(encoding="utf-8")
+
+
+def test_engine_ensure_graph_reuses_project_lsp_client(
+    monkeypatch: pytest.MonkeyPatch, java_project: Path
+) -> None:
+    engine = ExecutionEngine(java_project)
+    sentinel_client = object()
+    seen = {}
+
+    async def fake_parse(project_path, prefer_lsp=True, lsp_client=None):
+        seen["project_path"] = project_path
+        seen["lsp_client"] = lsp_client
+        return parse_java_project_static(project_path)
+
+    monkeypatch.setattr("core.engine.execution_engine.parse_java_project_async", fake_parse)
+    engine.set_lsp_client(sentinel_client)
+
+    graph = engine.ensure_graph(force_rebuild=True)
+
+    assert graph.resolve_class("OrderDTO") is not None
+    assert seen["project_path"] == java_project
+    assert seen["lsp_client"] is sentinel_client
 
 
 def test_patch_operation_creates_new_file(java_project: Path) -> None:
