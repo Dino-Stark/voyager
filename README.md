@@ -93,6 +93,7 @@ python examples/e2e_v1.py
 ## Documentation
 
 - [Architecture V1](designs/V1/Architecture%20V1.md)
+- [Alita Agent Workflow](designs/V1/Alita%20Agent%20Workflow.md)
 - [Apply Pipeline](designs/V1/Apply%20Pipeline.md)
 - [Voyager Server Mode](designs/V1/Voyager%20Server%20Mode.md)
 - [Manual Test Steps](designs/V1/Manual%20Test%20Steps%20for%20Patch%20Flow.md)

@@ -15,9 +15,10 @@ text trees because they are path indexes, not rendered diagrams. Keep fenced
 Read these first:
 
 1. [Architecture V1.md](./Architecture%20V1.md)
-2. [Voyager Server Mode.md](./Voyager%20Server%20Mode.md)
-3. [Apply Pipeline.md](./Apply%20Pipeline.md)
-4. [Manual Test Steps for Patch Flow.md](./Manual%20Test%20Steps%20for%20Patch%20Flow.md)
+2. [Alita Agent Workflow.md](./Alita%20Agent%20Workflow.md)
+3. [Voyager Server Mode.md](./Voyager%20Server%20Mode.md)
+4. [Apply Pipeline.md](./Apply%20Pipeline.md)
+5. [Manual Test Steps for Patch Flow.md](./Manual%20Test%20Steps%20for%20Patch%20Flow.md)
 
 Use these as supporting references:
 
@@ -30,6 +31,8 @@ Use these as supporting references:
 
 ```mermaid
 flowchart LR
+    user["User"]
+    alita["Alita<br/>Agent product layer"]
     cli["CLI command"]
     client["VoyagerServerClient"]
     server["VoyagerServer"]
@@ -37,10 +40,12 @@ flowchart LR
     engine["ExecutionEngine"]
     lsp["LspClient / JDT LS"]
 
-    cli --> client --> server --> session --> engine --> lsp
+    user --> alita --> cli --> client --> server --> session --> engine --> lsp
 ```
 
-The CLI is a client. The project-scoped Server owns the long-lived project state
+Alita is the future Agent product layer. Voyager is the lower-level engineering
+substrate: CLI/client, Server, graph, patch validation, VFS, JDT LS lifecycle,
+and atomic apply. The project-scoped Server owns the long-lived project state
 and JDT LS process.
 
 ---
@@ -162,6 +167,10 @@ Server processes.
 
 - Only Java is implemented.
 - The public edit API is patch-only.
+- Alita is not implemented yet. The intended next step is a single Agent product
+  layer with Agent/Ask/Plan/Debug-style modes, not a multi-agent system.
+- Any early command-line entrypoint for Alita should be treated as a development
+  integration path, not the final product interaction model.
 - File create/delete/move and source edits should be represented as unified diffs.
 - Patch validation uses a VFS transaction and a temporary `.voyager/cache/vfs-snapshots` project snapshot.
 - LSP snapshot diagnostics run when JDT LS is available and the project has Java build metadata.
