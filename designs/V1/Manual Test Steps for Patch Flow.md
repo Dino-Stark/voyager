@@ -220,6 +220,27 @@ Expected:
 - The operation is rejected instead if any hunk context does not match, or if
   JDT LS snapshot diagnostics report Java errors.
 
+Alternative Alita tool path instead of Step A4 and Step A5:
+
+```bash
+voyager alita tool plan-patch --patch agent-1.patch --patch agent-2.patch --json
+voyager alita tool apply-patch --plan current
+```
+
+Expected:
+
+- `plan-patch` returns a valid plan and saves a pending plan.
+- `apply-patch` shows the manual approval prompt under the default
+  `manual_confirm` policy.
+- Approving the prompt applies through the same Voyager Server apply path and
+  clears `.voyager/pending_plan.json`.
+
+Non-interactive approval for automation:
+
+```bash
+voyager alita tool apply-patch --plan current --yes --json
+```
+
 ### Step A6: Stop Server
 
 ```bash

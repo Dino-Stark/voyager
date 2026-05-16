@@ -177,9 +177,36 @@ should keep Alita above the CLI layer.
 Temporary local shape:
 
 ```bash
-voyager alita run "rename orderId to externalOrderId"
-voyager alita status
+voyager alita run "rename orderId to externalOrderId" --patch agent.patch
+git diff | voyager alita run "plan current changes" --patch -
+voyager alita agent run "plan current changes" --runtime manual --patch agent.patch --json
+voyager alita agent run "update DTO" --runtime adk --provider gemini --model <model> --json
+voyager alita tool plan-patch --patch agent.patch --json
+voyager alita tool apply-patch --plan current --yes --json
+voyager alita tool status --json
 ```
+
+Current MVP note: `voyager alita run` is a manual-patch bridge. It creates a run
+record, builds a deterministic context pack, records the supplied patch, calls
+Voyager plan through the Alita tool registry, evaluates HITL write policy for
+the future apply step, saves a pending plan when valid and not denied, and
+stops before apply. It records the plan tool call as
+`tool-call-plan-patch-1.json`. It does not call a model or run ADK yet.
+
+Current CLI-first tool note: `voyager alita tool plan-patch/apply-patch/status`
+is the first implementation of the tool boundary. `plan-patch` is safe and
+read-only for source files. `apply-patch` replans the pending operation,
+evaluates HITL policy, and applies through Voyager only when policy returns
+`allow`, `auto_execute` permits it, or a user explicitly approves an `ask_user`
+decision. JSON mode reports `ask_user` without prompting so agents can pause and
+resume cleanly.
+
+Current runtime note: `voyager alita agent run` introduces the runtime adapter
+boundary. The `manual` runtime makes the coordinator deterministic by treating
+`--patch` as model output. The optional `adk` runtime uses Google ADK for model
+execution and registers safe tools for `read_context_pack` and
+`voyager_plan_patch`. In both cases, runtime output is only a patch proposal;
+Voyager still validates it and Alita still stops before apply.
 
 Possible future product shape:
 
@@ -226,8 +253,8 @@ patch proposed -> plan valid -> apply -> verify
 ```
 
 Human approval keeps V1 safe while the agent loop is young. `--yes`-style
-automation can come after the run records, diagnostics, and verification story
-are reliable.
+automation is now available on the CLI-first tool path, but the default remains
+manual confirmation.
 
 ---
 

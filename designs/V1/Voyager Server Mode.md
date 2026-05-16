@@ -49,8 +49,19 @@ Normal local flow:
 voyager start .
 voyager scan .
 voyager plan patch agent.patch
+git diff | voyager plan patch -
 voyager apply -y
 voyager stop
+```
+
+Alita tool flow uses the same Server plan/apply methods behind the policy
+wrapper:
+
+```bash
+voyager alita agent run "plan current changes" --runtime manual --patch agent.patch --json
+voyager alita tool plan-patch --patch agent.patch --json
+voyager alita tool apply-patch --plan current --yes --json
+voyager alita tool status --json
 ```
 
 `scan/plan/apply` auto-start the project Server when needed, so explicit
@@ -60,12 +71,14 @@ Status:
 
 ```bash
 voyager status
+voyager status --json
 ```
 
 Progress and cancellation requests:
 
 ```bash
 voyager progress
+voyager progress --json
 voyager cancel
 ```
 
@@ -74,6 +87,10 @@ voyager cancel
 current V1 engine does not yet have cooperative cancellation checkpoints inside
 JDT LS or patch validation, so cancellation is a protocol and observability hook,
 not a guaranteed interrupt.
+
+`plan`, `apply`, `status`, `progress`, and Alita tool commands support `--json`
+for agent and automation callers that need structured results instead of
+Rich-rendered text.
 
 ---
 
@@ -90,7 +107,7 @@ src/core/session/
 `-- daemon.py           # legacy compatibility aliases
 
 src/voyager_cmd/
-|-- main.py         # CLI: start/serve/scan/plan/apply/status/progress/cancel/stop
+|-- main.py         # CLI: start/serve/scan/plan/apply/status/progress/cancel/alita/stop
 |-- server.py       # python -m voyager_cmd.server entrypoint
 `-- daemon.py       # legacy compatibility entrypoint
 ```

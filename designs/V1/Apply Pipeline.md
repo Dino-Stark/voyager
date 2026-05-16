@@ -47,23 +47,27 @@ flowchart TD
 ```bash
 voyager plan patch agent.patch
 voyager plan patch agent-1.patch agent-2.patch
+git diff | voyager plan patch -
 voyager apply -y
 ```
 
-The operation stores unified diff text in `.voyager/pending_plan.json`. During
-plan, Voyager parses the full patch set, rejects unsafe paths, checks that all
-hunks apply in order against exact virtual-file context, and validates a
-temporary project snapshot. During apply, Voyager repeats that virtual apply and
-validation before committing.
+The canonical input format is Git-style unified diff. The operation stores
+unified diff text in `.voyager/pending_plan.json`. During plan, Voyager parses
+the full patch set, rejects unsafe paths, checks that all hunks apply in order
+against exact virtual-file context, and validates a temporary project snapshot.
+During apply, Voyager repeats that virtual apply and validation before
+committing.
 
 Supported patch effects:
 
 - modify existing files,
+- parse `diff --git` text file sections with `---` / `+++` headers,
 - create new files with `/dev/null` as the old path,
 - delete files with `/dev/null` as the new path,
 - move files with `diff --git` `rename from` / `rename to` metadata,
 - move and modify a file in the same patch section,
-- apply multiple patch files to the same virtual file in order.
+- apply multiple patch files to the same virtual file in order,
+- read one patch from stdin through `voyager plan patch -`.
 
 Voyager does not expose separate public edit operations. Source and file changes
 should be represented as patches.
@@ -71,6 +75,26 @@ should be represented as patches.
 V1 only models UTF-8 text patch transactions. It explicitly rejects binary patch
 metadata, symlink patch metadata, chmod/mode-only metadata, and target files that
 cannot be decoded as UTF-8.
+
+For automation and future Alita tools, the CLI also supports machine-readable
+results:
+
+```bash
+voyager plan patch agent.patch --json
+voyager apply -y --json
+voyager status --json
+voyager progress --json
+voyager alita tool plan-patch --patch agent.patch --json
+voyager alita tool apply-patch --plan current --yes --json
+```
+
+JSON output includes validity or success, affected or modified files, structured
+validation errors, and structured LSP diagnostics when available.
+
+The Alita `apply-patch` tool is a policy wrapper around the same Voyager apply
+path. It replans the pending patch, evaluates HITL policy, prompts or requires
+explicit `--yes` approval for `ask_user`, and only then calls
+`VoyagerServerClient.apply()`.
 
 ---
 

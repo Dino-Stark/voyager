@@ -1,13 +1,17 @@
+import io
+import json
 import sys
 from pathlib import Path
 
 import pytest
 from rich.console import Console
+from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from cli.commands.errors import print_operation_errors
 from cli.commands.plan import _build_operation
+from voyager_cmd.main import cli
 from core.diff.patch_engine import PatchParseError, apply_parsed_patch, parse_unified_patch
 from core.engine.errors import EngineError
 from core.engine.execution_engine import (
@@ -218,6 +222,48 @@ def test_cli_builds_patch_set_operation(tmp_path: Path) -> None:
     ]
 
 
+def test_cli_builds_patch_operation_from_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch = """--- a/src/main/java/com/shop/OrderDTO.java
++++ b/src/main/java/com/shop/OrderDTO.java
+@@ -1,2 +1,2 @@
+ package com.shop;
+-class First {}
++class Second {}
+"""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(patch))
+
+    operation = _build_operation("patch", "-", None)
+
+    assert isinstance(operation, PatchOperation)
+    assert operation.patch_texts() == [patch]
+    assert operation.description == "-"
+
+
+def test_cli_plan_json_reports_invalid_patch_file() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["plan", "patch", "missing.patch", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["is_valid"] is False
+    assert payload["violations"][0]["type"] == "invalid_operation"
+    assert "missing.patch" in payload["violations"][0]["message"]
+
+
+def test_cli_apply_json_reports_missing_pending_plan(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    with runner.isolated_filesystem(temp_dir=tmp_path):
+        Path(".voyager").mkdir()
+        result = runner.invoke(cli, ["apply", "-y", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["success"] is False
+    assert payload["errors"][0]["type"] == "no_pending_plan"
+
+
 def test_parse_and_apply_unified_patch() -> None:
     patch_files = parse_unified_patch(
         """--- a/OrderDTO.java
@@ -260,6 +306,54 @@ rename to src/main/java/com/acme/NewDTO.java
     assert patch_files[0].target_path == "src/main/java/com/acme/OrderDTO.java"
     assert patch_files[1].is_moved_file
     assert patch_files[1].move_only
+
+
+def test_parse_git_diff_modify_section() -> None:
+    patch_files = parse_unified_patch(
+        """diff --git a/src/main/java/com/acme/OrderDTO.java b/src/main/java/com/acme/OrderDTO.java
+index 1111111..2222222 100644
+--- a/src/main/java/com/acme/OrderDTO.java
++++ b/src/main/java/com/acme/OrderDTO.java
+@@ -1,3 +1,3 @@
+ class OrderDTO {
+-    private String id;
++    private String externalId;
+ }
+"""
+    )
+
+    assert len(patch_files) == 1
+    assert patch_files[0].target_path == "src/main/java/com/acme/OrderDTO.java"
+
+
+def test_parse_git_diff_new_and_deleted_text_sections() -> None:
+    patch_files = parse_unified_patch(
+        """diff --git a/src/main/java/com/acme/NewDTO.java b/src/main/java/com/acme/NewDTO.java
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/main/java/com/acme/NewDTO.java
+@@ -0,0 +1,3 @@
++class NewDTO {
++}
++
+diff --git a/src/main/java/com/acme/OldDTO.java b/src/main/java/com/acme/OldDTO.java
+deleted file mode 100644
+index 1111111..0000000
+--- a/src/main/java/com/acme/OldDTO.java
++++ /dev/null
+@@ -1,3 +0,0 @@
+-class OldDTO {
+-}
+-
+"""
+    )
+
+    assert len(patch_files) == 2
+    assert patch_files[0].is_new_file
+    assert patch_files[0].target_path == "src/main/java/com/acme/NewDTO.java"
+    assert patch_files[1].is_deleted_file
+    assert patch_files[1].target_path == "src/main/java/com/acme/OldDTO.java"
 
 
 def test_patch_parser_rejects_binary_symlink_and_mode_only_patches() -> None:

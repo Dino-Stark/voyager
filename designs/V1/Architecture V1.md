@@ -76,6 +76,21 @@ context, reasons about the user's task, proposes unified diff patch sets, asks
 Voyager to validate them, revises rejected patches, and coordinates verification
 and approval.
 
+The current local Alita slice exposes a manual-patch bridge and CLI-first tools:
+
+```bash
+voyager alita run "<task>" --patch <patch_file|-> [--json]
+voyager alita agent run "<task>" --runtime manual --patch <patch_file|-> [--json]
+voyager alita agent run "<task>" --runtime adk --provider <provider> --model <model> [--json]
+voyager alita tool plan-patch --patch <patch_file|-> [--json]
+voyager alita tool apply-patch --plan current [-y|--yes] [--json]
+voyager alita tool status [--json]
+```
+
+These commands are development integration paths. The important architecture
+boundary is that runtime output is only a patch proposal, and Alita tools go
+through Voyager plan/apply plus the HITL policy wrapper before any source write.
+
 The product naming rule is:
 
 ```text
@@ -96,6 +111,8 @@ naming logic and next-stage Agent workflow.
 
 ```text
 src/
+|-- alita/               # Agent-layer context, policy, tool registry, run records
+|   `-- runtime/         # Runtime abstraction, provider profiles, optional ADK adapter
 |-- voyager_cmd/          # click CLI and runner API
 |-- cli/commands/         # scan/plan/apply presentation
 |-- core/

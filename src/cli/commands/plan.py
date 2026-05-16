@@ -1,7 +1,9 @@
 """Plan command: plan an operation and compute affected files."""
 
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from cli.commands.errors import print_operation_errors
@@ -21,6 +23,7 @@ def plan_operation(
     target: str,
     value: str | None,
     extra: list[str] | None = None,
+    json_output: bool = False,
 ) -> object | None:
     """
     Plan an operation and display affected files.
@@ -30,6 +33,7 @@ def plan_operation(
         target: Target identifier (e.g. 'com.shop.UserDTO.userName').
         value: New value (depends on op_type).
         extra: Additional CLI arguments.
+        json_output: If True, print a machine-readable JSON result.
 
     Returns:
         PlanResult dict or None on failure.
@@ -40,30 +44,48 @@ def plan_operation(
     # Build operation
     try:
         operation = _build_operation(op_type, target, value, extra or [])
-    except ValueError as e:
-        console.print(f"[red]Invalid operation: {e}[/red]")
+    except Exception as e:
+        if json_output:
+            _print_json(_invalid_plan_payload("invalid_operation", str(e)))
+        else:
+            console.print(f"[red]Invalid operation: {e}[/red]")
         return None
 
-    console.print(f"[bold]Planning:[/bold] {operation.op.value} {target}" + (f" -> {value}" if value else ""))
+    if not json_output:
+        console.print(
+            f"[bold]Planning:[/bold] {operation.op.value} {target}"
+            + (f" -> {value}" if value else "")
+        )
 
     # Execute plan through the persistent project server.
     try:
         result = PlanResult.model_validate(VoyagerServerClient(project_path).plan(operation))
     except Exception as e:
-        console.print(f"[red]Plan failed: {e}[/red]")
+        if json_output:
+            _print_json(_invalid_plan_payload("plan_failed", str(e)))
+        else:
+            console.print(f"[red]Plan failed: {e}[/red]")
         return None
 
     # Display result
     if result.is_valid:
-        console.print(f"[green]Plan valid.[/green] {len(result.affected_files)} file(s) affected:")
-        for fp in result.affected_files:
-            console.print(f"  - {fp}")
+        if json_output:
+            _print_json(result.model_dump(mode="json"))
+        else:
+            console.print(
+                f"[green]Plan valid.[/green] {len(result.affected_files)} file(s) affected:"
+            )
+            for fp in result.affected_files:
+                console.print(f"  - {fp}")
 
         storage.save_pending_plan(operation)
 
         return result
     else:
-        print_operation_errors(console, "[red]Plan rejected. Violations:[/red]", result.violations)
+        if json_output:
+            _print_json(result.model_dump(mode="json"))
+        else:
+            print_operation_errors(console, "[red]Plan rejected. Violations:[/red]", result.violations)
         return result
 
 
@@ -95,6 +117,19 @@ def _build_operation(
             description=", ".join(sources),
         )
     raise ValueError(f"Unknown operation type: {op_type}. Voyager editing is patch-only.")
+
+
+def _invalid_plan_payload(error_type: str, message: str) -> dict[str, Any]:
+    return {
+        "operation": None,
+        "affected_files": [],
+        "violations": [{"type": error_type, "message": message, "action": "error"}],
+        "is_valid": False,
+    }
+
+
+def _print_json(data: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 
 def _find_project_root() -> Path:
